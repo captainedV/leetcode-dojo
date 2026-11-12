@@ -54,7 +54,7 @@ interface GuardBackup {
 }
 
 const CURSOR_IGNORE_BODY = [
-  '# LeetCode Local IDE：练习模式',
+  '# LeetCode Dojo：练习模式',
   '# 让 Cursor 的 AI 索引/上下文忽略题目代码，避免整题被自动补全。',
   '# （Cursor 的 Tab 补全无法按目录关闭，请在 Cursor 设置里手动关闭或降低强度。）',
   '*',

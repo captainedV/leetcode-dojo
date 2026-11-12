@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="600" viewBox="0 0 960 600" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC',sans-serif">
+  <rect width="960" height="600" fill="#ffffff"/>
+  <text x="24" y="34" font-size="17" font-weight="700" fill="#1f2328">AI 补全限制：三档强度 + 8 条硬规则</text>
+  <text x="24" y="56" font-size="11.5" fill="#57606a">思路：AI 可以帮你想起 API 怎么写，但不能替你把题做完。</text>
+
+  <!-- 输入 -->
+  <rect x="24" y="80" width="150" height="64" rx="7" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="36" y="104" font-size="11.5" font-weight="700" fill="#1f2328">你在本题目录里输入</text>
+  <text x="36" y="122" font-size="10" fill="#57606a">solution.py · 光标处</text>
+
+  <!-- 门控 -->
+  <rect x="196" y="80" width="150" height="64" rx="7" fill="#ddf4ff" stroke="#54aeff"/>
+  <text x="208" y="104" font-size="11.5" font-weight="700" fill="#0a3069">只对练习文件生效</text>
+  <text x="208" y="122" font-size="10" fill="#0a3069">其它项目：完全不参与</text>
+
+  <!-- 三档 -->
+  <rect x="368" y="76" width="200" height="150" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="380" y="98" font-size="11.5" font-weight="700" fill="#1f2328">hint.level</text>
+
+  <rect x="380" y="108" width="176" height="34" rx="5" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="390" y="130" font-size="10.5" fill="#1f2328">off — 什么都不补</text>
+
+  <rect x="380" y="148" width="176" height="34" rx="5" fill="#dafbe1" stroke="#4ac26b"/>
+  <text x="390" y="170" font-size="10.5" font-weight="600" fill="#044f1e">signature — 只提示 API（默认）</text>
+
+  <rect x="380" y="188" width="176" height="34" rx="5" fill="#fff8c5" stroke="#d4a72c"/>
+  <text x="390" y="210" font-size="10.5" fill="#7d4e00">line — 允许补当前这一行</text>
+
+  <!-- 两条路径 -->
+  <rect x="596" y="76" width="340" height="82" rx="8" fill="#dafbe1" stroke="#4ac26b"/>
+  <text x="610" y="98" font-size="11.5" font-weight="700" fill="#044f1e">signature 路径：本地签名库</text>
+  <text x="610" y="116" font-size="10" fill="#044f1e">274 条刷题高频 API（Python / JS / C++ / Java / Go / Rust）</text>
+  <text x="610" y="132" font-size="10" fill="#044f1e">先看接收者：输入 bisect. / Math. / heapq. → 只给该模块下的 API</text>
+  <text x="610" y="148" font-size="10" fill="#044f1e">插入内容 = 名字 + 参数名（bisect_left(a, x)），永不含函数体</text>
+
+  <rect x="596" y="172" width="340" height="54" rx="8" fill="#fff8c5" stroke="#d4a72c"/>
+  <text x="610" y="194" font-size="11.5" font-weight="700" fill="#7d4e00">line 路径：AI 只给单行候选</text>
+  <text x="610" y="212" font-size="10" fill="#7d4e00">上下文 ±12 行 → 提示词 6 条禁令 → maxTokens 80 · temperature 0</text>
+
+  <!-- 8 条规则 -->
+  <rect x="596" y="240" width="340" height="196" rx="8" fill="#ffffff" stroke="#cf222e" stroke-width="1.5"/>
+  <rect x="596" y="240" width="340" height="26" rx="8" fill="#ffebe9"/>
+  <text x="610" y="258" font-size="11.5" font-weight="700" fill="#82071e">硬规则闸门（任一不过 → 丢弃）</text>
+  <g font-size="10" fill="#1f2328">
+    <text x="610" y="288">1  空文本 / 含换行（多行 = 整段解法）</text>
+    <text x="610" y="308">2  长度 &gt; hint.maxLineChars（默认 80）</text>
+    <text x="610" y="328">3  括号配平为负，或结尾还有未闭合括号（想开块）</text>
+    <text x="610" y="348">4  以 : { do then 结尾（块开头）</text>
+    <text x="610" y="368">5  语句位置上的控制流关键字 ≥ 2</text>
+    <text x="610" y="388">6  出现 class / def / function / public / fn 等定义</text>
+    <text x="610" y="408">7  与光标前/后已有内容重复</text>
+    <text x="610" y="428">8  语句数 &gt; 1（只数顶层分号）</text>
+  </g>
+
+  <!-- 结果 -->
+  <rect x="24" y="240" width="330" height="96" rx="8" fill="#ffffff" stroke="#d0d7de"/>
+  <text x="36" y="262" font-size="11.5" font-weight="700" fill="#1f2328">通过</text>
+  <text x="36" y="282" font-size="10" fill="#57606a">灰字（ghost text）出现在光标处</text>
+  <text x="36" y="298" font-size="10" fill="#57606a">按 Tab 接受；line 档只「续写」，不覆盖已输入内容</text>
+  <text x="36" y="318" font-size="10" fill="#57606a">被拦下时输出面板写清原因，例如：</text>
+  <text x="36" y="330" font-size="9.5" font-family="ui-monospace,Menlo,monospace" fill="#82071e">[hint] AI 候选被规则拦下：候选包含 2 条语句</text>
+
+  <rect x="24" y="352" width="330" height="104" rx="8" fill="#ddf4ff" stroke="#54aeff"/>
+  <text x="36" y="374" font-size="11.5" font-weight="700" fill="#0a3069">同时压制其它 AI 补全（进入练习模式时）</text>
+  <text x="36" y="394" font-size="10" fill="#0a3069">· github.copilot.enable = {"*": false}</text>
+  <text x="36" y="411" font-size="10" fill="#0a3069">· inlineSuggest.enable / nextEditSuggestions = false</text>
+  <text x="36" y="428" font-size="10" fill="#0a3069">· cursor.cpp.enableTabCompletion（存在才写）</text>
+  <text x="36" y="445" font-size="10" fill="#0a3069">· 写入题目目录 .cursorignore；退出时只还原改过的键</text>
+
+  <rect x="24" y="472" width="912" height="104" rx="8" fill="#fff8c5" stroke="#d4a72c"/>
+  <text x="38" y="494" font-size="11.5" font-weight="700" fill="#7d4e00">诚实的边界</text>
+  <text x="38" y="514" font-size="10.5" fill="#7d4e00">· Cursor 的 Tab 补全没有官方的工作区级开关 —— hint.level=off 只关闭**本扩展**提供的补全，Cursor Tab 需要你手动关。</text>
+  <text x="38" y="533" font-size="10.5" fill="#7d4e00">· signature 档只覆盖 6 种语言；其它语言在 signature 档没有提示，但 line 档仍可用（需自备 API Key）。</text>
+  <text x="38" y="552" font-size="10.5" fill="#7d4e00">· 刻意不做多行补全、不接 LSP：能补出一整行算法，就等于替你把这题做了。</text>
+</svg>

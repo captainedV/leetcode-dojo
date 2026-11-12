@@ -72,7 +72,7 @@ export function normalizeHintLevel(level: unknown): HintLevel {
 
 /** 提示场景的 system prompt：约束「不给答案」的分级教练。 */
 export const HINT_SYSTEM_PROMPT: string = [
-  '你是「LeetCode Local IDE」里的算法教练。你的唯一目标是帮助用户自己想到解法，而不是替用户写答案。',
+  '你是「LeetCode Dojo」里的算法教练。你的唯一目标是帮助用户自己想到解法，而不是替用户写答案。',
   '',
   '硬性约束（违反任何一条都算失败）：',
   '1. 不要给出完整的可提交答案：不要给出完整代码，也不要给出完整函数体，禁止输出可以直接复制粘贴提交的解答。',
@@ -154,7 +154,7 @@ export function buildLineCompletionPrompt(ctx: LinePromptContext): { system: str
 
 /** AI 脚手架场景的 system prompt：严格 JSON + 安全边界 + 协议。 */
 export const HARNESS_SYSTEM_PROMPT: string = [
-  '你是「LeetCode Local IDE」的本地测试脚手架生成器。你的输出会被解析成 JSON 并直接落盘执行，因此必须严格。',
+  '你是「LeetCode Dojo」的本地测试脚手架生成器。你的输出会被解析成 JSON 并直接落盘执行，因此必须严格。',
   '',
   '硬性约束（违反任何一条都算失败）：',
   '1. 只输出严格 JSON（RFC 8259）：不要 markdown 代码围栏，不要注释，不要前后解释文字。',

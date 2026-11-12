@@ -17,7 +17,7 @@ let session: LcSession | undefined;
 let output: vscode.OutputChannel | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
-  output = vscode.window.createOutputChannel('LeetCode Local');
+  output = vscode.window.createOutputChannel('LeetCode Dojo');
   const log = (line: string) => output?.appendLine(line);
   const store = new ProblemStore(context, log);
   session = new LcSession({ context, output, store });
@@ -30,7 +30,7 @@ export function activate(context: vscode.ExtensionContext): void {
         } catch (err) {
           const message = (err as Error).message ?? String(err);
           log(`[command:${id}] ${message}`);
-          void vscode.window.showErrorMessage(`LeetCode Local: ${message}`);
+          void vscode.window.showErrorMessage(`LeetCode Dojo: ${message}`);
         }
       }),
     );
@@ -90,7 +90,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   void vscode.commands.executeCommand('setContext', 'lcLocal.active', false);
-  log('LeetCode Local IDE 已激活（点状态栏「LeetCode」进入练习模式）');
+  log('LeetCode Dojo 已激活（点状态栏「LeetCode」进入练习模式）');
 
   // 自检探针：只在设置了 LC_LOCAL_SELFTEST 时启用，用来在真实宿主里核对「自动分栏」的最终布局
   if (process.env.LC_LOCAL_SELFTEST) {
@@ -102,6 +102,21 @@ export function activate(context: vscode.ExtensionContext): void {
  * 自检：模拟用户点「进入 LeetCode 模式」，然后把真实的 tabGroups 布局写进 JSON。
  * 仅在 LC_LOCAL_SELFTEST 环境变量存在时运行，正常使用完全不受影响。
  */
+/** 截图/演示用：一道真实可运行的 two-sum 解法（用于生成 README 截图里"结果全绿"的状态） */
+const DEMO_SOLUTION = `from typing import List
+
+
+class Solution:
+    def twoSum(self, nums: List[int], target: int) -> List[int]:
+        seen: dict[int, int] = {}
+        for i, v in enumerate(nums):
+            need = target - v
+            if need in seen:
+                return [seen[need], i]
+            seen[v] = i
+        return []
+`;
+
 function scheduleSelfTest(context: vscode.ExtensionContext, log: (line: string) => void): void {
   void (async () => {
     const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -118,9 +133,35 @@ function scheduleSelfTest(context: vscode.ExtensionContext, log: (line: string) 
         log(`[selftest] dump 失败：${(err as Error).message}`);
       }
     };
+    const mode = process.env.LC_LOCAL_SELFTEST;
     try {
       await wait(2500);
       await dump('before');
+      if (mode === 'shot') {
+        // 只为截图：进模式 → 打开 two-sum → 写一份正确解法 → 跑本地测试 → 停在这个状态
+        await vscode.commands.executeCommand('lcLocal.enter');
+        await wait(4000);
+        const sess = session as unknown as {
+          openProblem?: (slug: string, opts?: unknown) => Promise<void>;
+          layoutSnapshot?: () => Promise<{ sourceFile?: string }>;
+          runLocal?: () => Promise<void>;
+        };
+        await sess.openProblem?.('two-sum', { fromPage: false });
+        await wait(6000);
+        const snap = await sess.layoutSnapshot?.();
+        if (snap?.sourceFile) {
+          const doc = await vscode.workspace.openTextDocument(snap.sourceFile);
+          const edit = new vscode.WorkspaceEdit();
+          edit.replace(doc.uri, new vscode.Range(0, 0, doc.lineCount, 0), DEMO_SOLUTION);
+          await vscode.workspace.applyEdit(edit);
+          log('[selftest] 已写入演示解法');
+        }
+        await sess.runLocal?.();
+        await wait(5000);
+        await dump('shot');
+        log('[selftest] shot 模式就绪，可以截图了');
+        return;
+      }
       await vscode.commands.executeCommand('lcLocal.enter');
       await wait(5000);
       await dump('after-enter');

@@ -1,8 +1,8 @@
 {
   "name": "leetcode-local-ide",
-  "displayName": "LeetCode Local IDE",
-  "description": "在 VS Code / Cursor 中内嵌 LeetCode 网页，用本地 IDE 编写、调试、测试并提交代码。含 AI 补全限制与本地测试脚手架。",
-  "version": "0.3.1",
+  "displayName": "LeetCode Dojo",
+  "description": "在 VS Code / Cursor 里刷 LeetCode：左栏题面 + 右栏本地 IDE，本地编译调试、官方判题提交，并把 AI 补全限制在「API 提示 / 单行」级别。",
+  "version": "0.4.0",
   "publisher": "xialc",
   "license": "MIT",
   "engines": {
@@ -14,10 +14,14 @@
   ],
   "keywords": [
     "leetcode",
-    "algorithm",
+    "leetcode-cn",
     "local ide",
     "debug",
-    "coding interview"
+    "algorithm",
+    "practice",
+    "ai restraint",
+    "cursor",
+    "vs code"
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
@@ -28,130 +32,130 @@
       {
         "command": "lcLocal.enter",
         "title": "进入 LeetCode 模式",
-        "category": "LeetCode Local",
+        "category": "LeetCode Dojo",
         "icon": "$(browser)"
       },
       {
         "command": "lcLocal.exit",
         "title": "退出 LeetCode 模式",
-        "category": "LeetCode Local",
+        "category": "LeetCode Dojo",
         "icon": "$(close)"
       },
       {
         "command": "lcLocal.runLocal",
         "title": "本地运行测试",
-        "category": "LeetCode Local",
+        "category": "LeetCode Dojo",
         "icon": "$(debug-start)"
       },
       {
         "command": "lcLocal.debugLocal",
         "title": "本地调试",
-        "category": "LeetCode Local",
+        "category": "LeetCode Dojo",
         "icon": "$(bug)"
       },
       {
         "command": "lcLocal.runOnLeetCode",
         "title": "在 LeetCode 上运行（官方判题）",
-        "category": "LeetCode Local",
+        "category": "LeetCode Dojo",
         "icon": "$(play)"
       },
       {
         "command": "lcLocal.submit",
         "title": "提交到 LeetCode",
-        "category": "LeetCode Local",
+        "category": "LeetCode Dojo",
         "icon": "$(cloud-upload)"
       },
       {
         "command": "lcLocal.switchLanguage",
         "title": "切换语言",
-        "category": "LeetCode Local",
+        "category": "LeetCode Dojo",
         "icon": "$(symbol-enum)"
       },
       {
         "command": "lcLocal.reloadSnippet",
         "title": "重置为官方模板",
-        "category": "LeetCode Local",
+        "category": "LeetCode Dojo",
         "icon": "$(refresh)"
       },
       {
         "command": "lcLocal.regenerateHarness",
         "title": "重建本地测试脚手架",
-        "category": "LeetCode Local"
+        "category": "LeetCode Dojo"
       },
       {
         "command": "lcLocal.aiHarness",
         "title": "AI 生成测试脚手架（示例不足时）",
-        "category": "LeetCode Local"
+        "category": "LeetCode Dojo"
       },
       {
         "command": "lcLocal.aiHint",
         "title": "获取提示（不直接给答案）",
-        "category": "LeetCode Local",
+        "category": "LeetCode Dojo",
         "icon": "$(lightbulb)"
       },
       {
         "command": "lcLocal.setSession",
         "title": "设置登录 Cookie（leetcode.com 备用）",
-        "category": "LeetCode Local"
+        "category": "LeetCode Dojo"
       },
       {
         "command": "lcLocal.setAiKey",
         "title": "设置 AI API Key",
-        "category": "LeetCode Local"
+        "category": "LeetCode Dojo"
       },
       {
         "command": "lcLocal.toggleAiGuard",
         "title": "开启/关闭 AI 补全限制",
-        "category": "LeetCode Local"
+        "category": "LeetCode Dojo"
       },
       {
         "command": "lcLocal.showDiagnostics",
         "title": "显示诊断信息",
-        "category": "LeetCode Local"
+        "category": "LeetCode Dojo"
       },
       {
         "command": "lcLocal.openProblem",
         "title": "打开题目…",
-        "category": "LeetCode Local",
+        "category": "LeetCode Dojo",
         "icon": "$(search)"
       },
       {
         "command": "lcLocal.reloadPage",
         "title": "刷新网页",
-        "category": "LeetCode Local"
+        "category": "LeetCode Dojo"
       },
       {
         "command": "lcLocal.refreshSession",
         "title": "刷新登录状态",
-        "category": "LeetCode Local"
+        "category": "LeetCode Dojo"
       },
       {
         "command": "lcLocal.showLog",
         "title": "显示输出面板",
-        "category": "LeetCode Local"
+        "category": "LeetCode Dojo"
       },
       {
         "command": "lcLocal.signOut",
         "title": "退出登录（清除本地保存的登录态）",
-        "category": "LeetCode Local",
+        "category": "LeetCode Dojo",
         "icon": "$(sign-out)"
       },
       {
         "command": "lcLocal.openPanel",
         "title": "打开底部面板（测试用例 / 结果）",
-        "category": "LeetCode Local",
+        "category": "LeetCode Dojo",
         "icon": "$(layout-panel)"
       },
       {
         "command": "lcLocal.resetLayout",
         "title": "重置左右分栏布局（左题面 + 右代码）",
-        "category": "LeetCode Local",
+        "category": "LeetCode Dojo",
         "icon": "$(split-horizontal)"
       },
       {
         "command": "lcLocal.quickMenu",
         "title": "打开快捷控制菜单",
-        "category": "LeetCode Local",
+        "category": "LeetCode Dojo",
         "icon": "$(flame)"
       }
     ],
@@ -211,7 +215,7 @@
       ]
     },
     "configuration": {
-      "title": "LeetCode Local IDE",
+      "title": "LeetCode Dojo",
       "properties": {
         "lcLocal.site": {
           "type": "string",
@@ -357,5 +361,13 @@
     "esbuild": "^0.24.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/captainedV/leetcode-dojo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/captainedV/leetcode-dojo/issues"
+  },
+  "homepage": "https://github.com/captainedV/leetcode-dojo#readme"
 }

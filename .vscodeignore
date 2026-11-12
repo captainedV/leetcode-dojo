@@ -1,5 +1,9 @@
 .vscode/**
 src/**
+docs/**
+.github/**
+CHANGELOG.md
+CONTRIBUTING.md
 test/**
 scripts/**
 node_modules/**

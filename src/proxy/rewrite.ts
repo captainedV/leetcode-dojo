@@ -238,9 +238,9 @@ export function challengePageHtml(site: SiteConfig, detail: string): string {
 
 /** 生成 ICP/隐私无侵入的内部首页（当用户直接访问代理根路径时） */
 export function internalHomeHtml(port: number, site: SiteConfig): string {
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>LeetCode Local IDE 代理</title>
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>LeetCode Dojo 代理</title>
 <style>body{font-family:-apple-system,sans-serif;padding:24px;line-height:1.6}</style></head><body>
-<h1>LeetCode Local IDE 本地代理</h1>
+<h1>LeetCode Dojo 本地代理</h1>
 <p>代理目标：<code>${site.origin}</code>，监听端口 <code>${port}</code>。</p>
 <p>请从 VS Code / Cursor 的「进入 LeetCode 模式」按钮使用，不要直接访问此页面。</p>
 </body></html>`;

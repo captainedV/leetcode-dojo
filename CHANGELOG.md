@@ -1,0 +1,40 @@
+# Changelog
+
+本项目遵循「版本号对齐 `package.json` + 每个版本一条 tag」的约定。
+格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，日期为本地时间。
+
+## [0.4.0] — 2026-11-12
+
+首个公开发布版本（仓库更名为 **LeetCode Dojo**，扩展 ID 仍为 `xialc.leetcode-local-ide`）。
+
+### Added
+- 左栏内嵌 `leetcode.cn`（本地反向代理），支持**栏内登录**；Cookie 持久化到系统钥匙串，重开 IDE 免登录
+- **焦点模式**：题目页自动隐藏线上 IDE（代码区 / 测试用例区），题面铺满整栏；可一键切换回完整网页
+- 底部面板（WebviewView）：**测试用例 / 测试结果** 双 tab，含按用例调试、自定义输入、运行 / 提交 / 重建按钮
+- 本地测试脚手架：Python、C、C++、Java、JavaScript、TypeScript、Go、Rust、Ruby（真实进程执行）
+- 官方运行 / 提交：REST 直连 + 页面桥接（改包 `fetch`/`XHR`）双通道
+- 断点调试：调试器类型按扩展探测并自动降级；Python 走标准 `import` 入口
+- AI 受限补全：`off` / `signature`（274 条 API 签名）/ `line`（8 条硬规则闸门）
+- 分级提示（`api` / `nudge` / `approach`）、AI 生成测试脚手架
+- AI 守卫：进入练习模式时压制 Copilot 与已知 Cursor 设置，写 `.cursorignore`
+- 自动左右分栏 + **布局守护**（左栏出现普通文件自动搬回右栏）
+- 学习计划 / 每日一题等入口进题：接管 `window.open`，同站链接在面板内跳转
+
+### Fixed（本版本内的重要修复，均带回归测试）
+- `TabInputWebview.viewType` 带 `mainThreadWebview-` 前缀导致「布局守护」从未生效
+- `workbench.action.lockEditorGroup` 在新版 VS Code / Cursor 中不生效 → 改为主动搬移
+- Python PEP 604 注解（`ListNode | None`）在系统 3.9 上崩溃 → 自动选 3.10+ + 兼容 metaclass
+- 学习计划里点题目无反应（`window.open` 被 webview 拦截）
+- 多解题目顺序不同被误判为失败 → 增加乱序等价比较
+- 底部面板「贡献了但从不打开」→ 进入模式时自动打开 + 失败兜底提示
+- 站点用绝对地址路由导致 iframe 跳出代理源 → 代理 CDN 并改写文本内绝对 URL
+
+## 历史里程碑（提交记录）
+
+| 标签 | 说明 |
+|---|---|
+| `v0.2.6` | 支持学习计划等入口进题（接管 `window.open`）、按用例调试、登录态持久化 |
+| `v0.3.1` | 界面重做 + 修复自动分栏（viewType 前缀 / 布局守护） |
+| `v0.4.0` | 首次对外发布，品牌更名 LeetCode Dojo，补全 README / CI / 文档 |
+
+[0.4.0]: https://github.com/captainedV/leetcode-dojo/releases/tag/v0.4.0

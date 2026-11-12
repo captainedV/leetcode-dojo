@@ -26,7 +26,7 @@ export class SitePanel {
       enableScripts: true,
       localResourceRoots: [vscode.Uri.joinPath(deps.extensionUri, 'dist', 'media')],
     };
-    webview.html = renderHtml(webview, deps.extensionUri, deps.proxyOrigin);
+    webview.html = renderShellHtml(webview, deps.extensionUri, deps.proxyOrigin);
 
     webview.onDidReceiveMessage(
       (msg: ShellToHost) => {
@@ -109,7 +109,8 @@ export class SitePanel {
   }
 }
 
-function renderHtml(webview: vscode.Webview, extensionUri: vscode.Uri, proxyOrigin: string): string {
+/** 渲染左栏 shell 的完整 HTML（导出以便截图脚本与测试复用） */
+export function renderShellHtml(webview: vscode.Webview, extensionUri: vscode.Uri, proxyOrigin: string): string {
   const nonce = randomNonce();
   const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'media', 'shell.js'));
   const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'media', 'shell.css'));

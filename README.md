@@ -1,346 +1,496 @@
-# LeetCode Local IDE
+<div align="center">
 
-在 **VS Code / Cursor** 里刷 LeetCode：左侧内嵌 LeetCode 网页（可登录、可点官方按钮），右侧用**本地 IDE** 写代码 —— 支持多语言、本地测试、本地断点调试、限制 AI 补全、一键提交。
+# LeetCode Dojo · 刷题道场
 
-> 一句话使用范式：点状态栏 `LeetCode` → 左栏是你的 LeetCode 网站 → 点进任意题目 → 右栏自动出现同名本地文件 + 官方类框架 → 本地写/调/测 → 工具栏提交。
+**在 VS Code / Cursor 里一站式刷 LeetCode —— 左边题面，右边本地 IDE，底下测试台。**
 
-```
-┌───────────────────────────┬────────────────────────────────┐
-│ 左侧：只显示题面的 LeetCode │ 右侧：本地 IDE（真实文件）        │
-│ ───────────────────────── │ ────────────────────────────── │
-│ [题目描述][题解][提交记录]  │  solution.py                    │
-│                           │  （断点调试 / 补全 / 重构都在这里）│
-│ 1. 两数之和  简单          │                                │
-│ 给定一个整数数组 nums …    │  ← 线上 IDE 已被自动隐藏，      │
-│ 示例 1: 输入 … 输出 …      │     题面铺满整栏                │
-│ （题面滚动区）             │                                │
-└───────────────────────────┴────────────────────────────────┘
-┌─ 底部面板：LeetCode ───────────────────────────────────────────┐
-│ 1. 两数之和  leetcode/001.two-sum/solution.py  [Python3 ▾]      │
-│ [本地运行] [官方运行] [提交] [调试] [重建用例] [用例文件]         │
-│ [测试用例] [测试结果]                                           │
-│ ✅ 用例 1：实际 [0,1] ｜ 期望 [0,1]      12ms                   │
-│ ❌ 用例 2：实际 [0,0] ｜ 期望 [1,2]      9ms                    │
-└────────────────────────────────────────────────────────────────┘
-```
+本地编译 · 断点调试 · 官方判题 · 登录态持久化 —— 并把 AI 补全限制在「API 提示 / 单行」，让你在练习，而不是在抄。
+
+[![VS Code](https://img.shields.io/badge/VS%20Code-%E2%89%A51.90-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
+[![Cursor](https://img.shields.io/badge/Cursor-supported-000000)](https://cursor.com/)
+[![Version](https://img.shields.io/badge/version-0.4.0-blue)](CHANGELOG.md)
+[![Tests](https://img.shields.io/badge/tests-299%20passed-brightgreen)](test/)
+[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![CI](https://github.com/captainedV/leetcode-dojo/actions/workflows/ci.yml/badge.svg)](https://github.com/captainedV/leetcode-dojo/actions/workflows/ci.yml)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](CONTRIBUTING.md)
+
+<img src="docs/images/ide-full.png" alt="LeetCode Dojo 在 VS Code 中的实际界面：左栏题面、右栏本地代码、底部测试结果" width="100%">
+
+<sub>真实截图：左栏只剩题面（线上 IDE 已自动隐藏）· 右栏是本地 <code>solution.py</code>（可断点调试）· 底部面板显示「本地测试 3/3 通过」</sub>
+
+</div>
 
 ---
 
-## 1. 安装
+<details>
+<summary><b>English TL;DR</b> (click to expand)</summary>
 
-```bash
-# VS Code
-code --install-extension leetcode-local-ide-0.1.0.vsix
-# Cursor
-cursor --install-extension leetcode-local-ide-0.1.0.vsix
-```
+**LeetCode Dojo** is a VS Code / Cursor extension for practising LeetCode *locally*.
 
-从源码构建：
+- **Left pane**: the real `leetcode.cn` page inside a locally reverse-proxied webview — log in there, and the online editor is hidden automatically so the statement fills the pane.
+- **Right pane**: a real local file (`solution.py`, `Solution.java`, …) seeded with the official class skeleton and kept in sync with the selected language. Compile, break-point and debug it with your normal toolchain.
+- **Bottom panel**: test cases and per-case results; run locally (real processes, 9 languages), run/submit on LeetCode (official judge), and debug a single case with custom input.
+- **AI restraint**: completions are limited to (a) a bundled DB of 274 API signatures, or (b) a *single line* candidate that must pass 8 hard textual rules. Copilot / Cursor Tab are suppressed while in practice mode.
 
-```bash
-npm install
-npm run build       # 打包扩展 + webview + 注入脚本到 dist/
-npm test            # 220 个单元/集成测试
-npm run package     # 产出 .vsix
-```
+Docs are in Chinese; code, tests and commits are English-friendly. See [`docs/verification`](docs/verification) for the measured evidence behind each claim.
+
+</details>
+
+<details>
+<summary><b>目录</b></summary>
+
+- [✨ 两个核心亮点](#-两个核心亮点)
+- [功能一览](#功能一览)
+- [截图](#截图)
+- [安装](#安装)
+- [快速上手](#快速上手)
+- [使用指南](#使用指南)
+- [AI 补全限制（详解）](#ai-补全限制详解)
+- [配置项](#配置项)
+- [工作原理](#工作原理)
+- [兼容性与验证状态](#兼容性与验证状态)
+- [常见问题](#常见问题)
+- [路线图](#路线图)
+- [开发](#开发)
+- [致谢与免责声明](#致谢与免责声明)
+
+</details>
 
 ---
 
-## 2. 快速上手
+## ✨ 两个核心亮点
 
-1. 点左下角状态栏 **`LeetCode`**（或命令面板 `LeetCode Local: 进入 LeetCode 模式`）。
-2. 左栏加载 LeetCode 题库页面 —— **在左栏里直接登录**。登录态会自动保存（见下节），重开 IDE 不用再登录。
-3. 点进任意题目：右栏自动创建并打开本地文件（已填好官方类框架）；
-   **左栏会自动只保留题面**（隐藏线上 IDE 的代码区与测试用例区，题面铺满整栏）。
-   想临时看完整网页（例如用站点自己的按钮 / 看站点题解高亮），点左栏工具栏的「只显示题面 / 显示完整网页」开关。
-4. 写代码。**保存即同步**到网页（网页内部状态与你的文件一致）。
-5. 用工具栏（左栏顶部）或命令面板：
-   - **本地运行** `⌘/Ctrl+Alt+Enter` — 在本地跑测试用例（毫秒级，可反复）
-   - **调试** — 用本地调试器打断点
-   - **官方运行** — 调 LeetCode 官方判题（用示例用例），结果显示在输出面板
-   - **提交** `⌘/Ctrl+Alt+S` — 提交到 LeetCode
-   - **语言** 下拉框 — 切换语言，自动切换/新建对应语言的本地文件
-   - **提示** `⌘/Ctrl+Alt+H` — 分级的 AI 提示（默认只讲 API 用法，不给代码）
-6. **从任何入口进题都行**：题库列表、**学习计划（面试经典 150 等）**、每日一题、竞赛题单…
-   学习计划里的题目行原本用 `window.open` 弹新窗口（IDE 里会被拦），现在会在**当前面板内跳转**；
-   左栏还提供 `←` `→` `题库` 导航按钮，方便"回学习计划点下一题"。
-7. 也可以直接在网页里点 LeetCode 自己的「运行 / 提交」按钮 —— 桥接脚本会把请求体里的代码替换成**你本地的代码和当前语言**，所以两边行为一致。
+### 亮点一：IDE 内一站式本地刷题（本地编译 + 断点调试）
 
-### 自动分栏（v0.3.1）
+不用在浏览器和编辑器之间来回复制粘贴 —— 题面、编辑器、测试台在同一个窗口里，而你写的是**真实的本地文件**。
 
-进入模式后会**自动把窗口分成左右两栏**：左栏题面（webview），右栏本地代码；底部面板放测试用例/结果。
+| 你得到什么 | 实现方式 |
+|---|---|
+| 左栏是**真的** LeetCode 页面 | 本地反向代理 `127.0.0.1:PORT` → `leetcode.cn`，去掉 `X-Frame-Options` / CSP，改写页面里的绝对地址防止跳出 |
+| 在栏内直接登录，**不用每次重登** | Cookie 双向同步到本地 CookieJar，持久化在**系统钥匙串**；代理端口固定复用，站点 localStorage 也跟着保留 |
+| 只留题面，不被线上 IDE 干扰 | **焦点模式**：自动隐藏页面的「代码 / 测试用例」面板，并把题面拉到 100% 宽高 |
+| 右栏是**真实文件**，可编译可调试 | 按题目落盘 `leetcode/001.two-sum/solution.py`，写入官方类框架；断点、变量、单步都是本地调试器 |
+| 测试结果就在下方 | 底部面板「测试用例 / 测试结果」，可**按用例调试**、可**自定义输入** |
+| 提交走**官方判题** | 双通道：REST 直连（`interpret_solution` / `submit` / `check`）+ 页面桥接（改包 `fetch` / `XHR` 替换代码与语言） |
+| 自动分栏不会被打乱 | `setEditorLayout` 设两栏 + **布局守护**：左栏一旦出现普通文件就自动搬回右栏，分栏被拖掉会自动补回 |
 
-实现上有三层保障：
+<div align="center">
+<img src="docs/images/left-pane.png" alt="左栏：焦点模式下的题面" width="46%"> <img src="docs/images/bottom-panel-results.png" alt="底部：逐用例结果" width="52%">
+</div>
 
-1. `vscode.setEditorLayout` 直接设成两栏（比例可配 `lcLocal.layout.leftRatio`，默认 0.45）；
-2. 左栏原有的代码文件会被**搬到右栏**（先开右栏副本再关左栏副本，不丢未保存内容）；
-3. **布局守护**：监听 `tabGroups` 变化，左栏一旦出现普通文件（点文件树、打开 cases.json、断点跳转）就自动搬回右栏；
-   如果分栏被拖掉只剩一栏，会自动补回来。
+### 亮点二：AI 补全限制（练习优先）
 
-> 为什么需要第 3 层：`workbench.action.lockEditorGroup`（"锁定编辑器组"）实测在 VS Code 1.138 / Cursor 1.128 里**不生效**
-> （执行后 `tabGroups.all[0].isLocked` 仍是 false）；另外 `TabInputWebview.viewType` 会带 `mainThreadWebview-` 前缀，
-> 早先按全等匹配 `lcLocal.site` 判断"这个标签是不是题面"永远失败，导致守护形同虚设——这是"自动分栏还是没解决"的真正原因。
-
-出问题时的排查：命令 `LeetCode Local: 显示诊断信息` 会打印 `editorGroups=`（栏数）和 `layout=`（每栏里有什么），
-还可以直接执行 `LeetCode Local: 重置左右分栏布局` 一键归位。
-
-### 结果在哪里看：底部「LeetCode」面板
-
-> **v0.2.3 修复**：之前面板只是被"贡献"出来，但没有任何地方主动打开它，所以你进模式后看不到。
-> 现在进入 LeetCode 模式 / 打开题目时会自动把底部面板叫出来（复用你已有的面板区域，不新建窗口），
-> 打开后焦点仍留在左侧题面。想手动叫出来：左栏工具栏 `面板` 按钮、编辑器标题栏的布局图标、
-> 或命令 `LeetCode Local: 打开底部面板`。若你的编辑器里压根没有「LeetCode」这个面板 tab（个别发行版会隐藏扩展面板容器），
-> 执行一次 `查看 → 面板` 让它展开即可。若自动打开失败，会弹一个提示给你两个按钮（`打开面板` / `用输出面板`），
-不会让你去猜；`LeetCode Local: 显示诊断信息` 里的 `resultsPanel=已连接/未创建` 也能告诉你面板到底有没有创建。
-
-运行/提交完，底部面板会自动展开并切到「测试结果」：
+直接让 AI 写完整题，练习就失去意义；完全不给提示，在 vibe coding 时代又常常记不住 API 细节。所以做成**分级 + 硬约束**：
 
 ```
-1. 两数之和   leetcode/001.two-sum/solution.py   [Python3 ▾]
-[本地运行] [官方运行] [提交] [调试] [重建用例] [用例文件]
- [测试用例（3）]  [测试结果（3）]
- ❌ 本地测试 2/3 通过    首个失败：用例 3 实际 [0,0] / 期望 [0,1]
-   ✅ 用例 1：实际 [0,1] ｜ 期望 [0,1]
-   ❌ 用例 3：实际 [0,0] ｜ 期望 [0,1]
+off ────────► 完全不补
+signature ──► 只提示「你正在调用的那个 API」的签名（默认，274 条刷题高频 API）
+line ───────► 允许补当前这一行，但必须先过 8 条硬规则闸门
 ```
 
-- 布局刻意模仿 LeetCode 线上 IDE 的下半部分；「测试用例」tab 能看到每个用例的输入与期望输出。
-- 失败时还会**自动打开输出面板**（`输出 → LeetCode Local`）并在弹窗里给出首个失败用例。
-- 面板被关掉了？命令面板执行 `LeetCode Local: 显示输出面板`，或再跑一次运行/提交；也可以在底部面板右上角重新打开「LeetCode」容器。
-- 截图：`docs/verification/bottom-panel.png`、`docs/verification/left-pane-description-only.png`
+<img src="docs/images/ai-guard.png" alt="AI 补全限制：三档强度与 8 条硬规则" width="100%">
 
-### 登录态保留（v0.2.1）
+- **提示词层**：6 条禁令（不换行 / 不解释 / 不围栏 / ≤120 字符 / 不复述已写内容 / 禁止生成循环分支与函数定义）
+- **参数层**：`maxTokens: 80`、`temperature: 0` —— 结构上就不允许长篇输出
+- **规则层**：8 条**纯文本**硬规则（空或多行、超长、括号未闭合、以 `:`/`{` 结尾、控制流 ≥2、出现函数定义、与已有内容重复、语句数 >1），任一不过直接丢弃
+- **生态层**：进入练习模式时压制 `github.copilot.*` 与已知的 `cursor.*` 设置，写 `.cursorignore`；退出时**只还原自己改过的键**
 
-登录一次之后就不用再登了，做了四件事：
+> 诚实边界：Cursor 的 Tab 补全没有官方工作区级开关，`hint.level=off` 只关闭**本扩展**的补全。详见 [AI 补全限制（详解）](#ai-补全限制详解)。
 
-| 保存什么 | 存在哪 | 为什么 |
+---
+
+## 功能一览
+
+| 能力 | 状态 | 说明 |
+|---|:--:|---|
+| 内嵌 LeetCode 网页 + 栏内登录 | ✅ | `leetcode.cn`（`leetcode.com` 受 Cloudflare 限制，退化为 API 模式） |
+| 登录态持久化 | ✅ | 系统钥匙串；重开 IDE 免登录，自动回到上次那道题 |
+| 焦点模式（只显示题面） | ✅ | 一键切换「只显示题面 / 显示完整网页」 |
+| 自动左右分栏 + 布局守护 | ✅ | 左题面 / 右代码 / 底测试台，被打乱会自动归位 |
+| 官方类框架同步 + 语言切换 | ✅ | 20 种语言可选；切换语言自动切 / 建对应文件 |
+| 本地测试（真实进程执行） | ✅ | Python / C / C++ / Java / JavaScript / TypeScript / Go / Rust / Ruby |
+| 按用例调试 / 自定义输入 | ✅ | 只把选中的用例写进脚手架，断点不会被别的用例先命中 |
+| 断点调试 | ✅ | 调试器类型自动探测并降级（见下表） |
+| 官方运行 / 提交 | ✅ | 结果显示在底部面板 |
+| 分级提示（不给代码） | ✅ | `api` / `nudge` / `approach` 三档 |
+| AI 生成测试脚手架 | ✅ | 设计类 / 特殊输入时兜底（严格 JSON + 路径与命令白名单校验） |
+| 学习计划等入口进题 | ✅ | 接管 `window.open`：同站链接在面板内跳转，站外链接交给系统浏览器 |
+
+**本地调试需要的调试器扩展**（都不是内置的，缺了会给出可操作的安装提示）：
+
+| 语言 | 扩展 | 调试器类型（按顺序尝试） |
 |---|---|---|
-| `LEETCODE_SESSION` / `csrftoken` 等 cookie | **系统钥匙串**（`context.secrets`），不可用时退回 `globalStorage/*.json` | 登录态本体；用钥匙串避免明文落盘 |
-| 代理端口 | `globalState` | 站点页面跑在 `http://127.0.0.1:<port>`，而 **localStorage 按源隔离**——端口一变，站点的语言选择、题目草稿就全丢了。所以端口固定复用 |
-| 上次打开的题目 | `globalState` | 重开 IDE 直接回到那道题，左栏直接加载该题页面、右栏直接打开文件 |
-| 登录用户名的脱敏记录 | 随 cookie 一起 | 用于在左栏状态条显示「已登录：xxx」 |
-
-细节：
-
-- **cookie 一变就（600ms 防抖）自动保存**，并在检测到会话 cookie 出现时自动刷新一次登录状态（不需要手动点「刷新登录状态」）；`exit()` / 窗口关闭时再兜底保存一次。
-- 会话 cookie 回给浏览器时**保留 `HttpOnly`**（页面脚本读不到），`csrftoken` 照旧可读（站点需要）。
-- 想彻底清掉登录态：命令面板 `LeetCode Local: 退出登录` —— 会删掉钥匙串里的记录、`globalStorage` 里的文件，并让浏览器把旧 cookie 置为过期。
-- 端口被别的程序占用了？会自动退回随机端口（会话仍可用，只是那一次的站点 localStorage 会换源）。
-
----
-
-## 3. 为什么是 `leetcode.cn`（以及 `leetcode.com` 怎么办）
-
-实测结论（本项目实测，非推测）：
-
-| 站点 | 能否内嵌到 IDE | 原因 |
-|---|---|---|
-| **leetcode.cn** | ✅ 可以 | 无 `X-Frame-Options`、无 CSP，Node 能正常取到文档 |
-| **leetcode.com** | ❌ 不行 | Cloudflare 对非浏览器 TLS 指纹返回 `403 challenge`（`cf-mitigated: challenge`），且响应带 `X-Frame-Options: SAMEORIGIN` |
-
-因此默认站点是 `leetcode.cn`（中文站，题目与 leetcode.com 基本一一对应）。
-用 `leetcode.com` 时退化为 **API 模式**：命令面板 `LeetCode Local: 设置登录 Cookie`，粘贴浏览器里的 `LEETCODE_SESSION` 与 `csrftoken`，即可用本地 IDE + 官方判题 + 提交（但没有内嵌网页）。
-
----
-
-## 4. 本地测试是怎么做的
-
-**优先从 LeetCode 拿数据，拿不到才用 AI**——顺序如下：
-
-1. **官方元数据**：`GraphQL question()` 给 `metaData`（函数名、每个参数名与类型、返回类型）+ `codeSnippets`（各语言官方模板）+ `exampleTestcases`（官方判题机用的示例输入）。
-2. **期望输出**：从题面 HTML 解析 `Input/Output/输入/输出` 块（两种 HTML 写法都支持），并按**输入内容**匹配，避免题面顺序错位。
-3. **生成脚手架**：在 `local/` 下生成跨语言测试驱动（绝不修改你的代码文件）：
-   - 与 LeetCode 评测机一致的运行环境（Python 注入 `typing` / `ListNode` / `TreeNode` 的 preamble 并 `exec` 你的文件）
-   - 参数反序列化 / 返回值序列化（含链表、二叉树层序去尾 null、原地修改取首参等）
-   - 统一协议行 `__LC_RESULT__ {...}`，由 TS 侧归一化比较（浮点容差、布尔大小写、空白）
-4. **AI 兜底**：设计类题目、特殊输入，或某语言没有内置脚手架时，用你自己的 API Key 让模型生成脚手架（严格 JSON 输出 + 文件名/命令白名单校验，只写入 `local/ai/`）。
-
-**比较策略（重要）**：先严格比较（忽略空白/引号/浮点误差）；严格不等时再做**乱序等价**比较
-（把数组（含二维）当多重集合比较）。因为 LeetCode 上不少题接受任意顺序（两数之和的下标、
-三数之和、全排列、字母异位词分组…），官方用 special checker，只做严格比较会出现
-「本地未通过但提交 Accepted」的假阴性。乱序命中时会标注「内容一致但顺序不同」。
-
-`cases.json` 你可以手改（加自己的边界用例），本地运行会读它。
-
-### 语言支持
-
-| 语言 | 本地运行 | 本地调试 | 说明 |
-|---|---|---|---|
-| Python3 / Python | ✅ | ✅ | 与官方评测机同款 preamble |
-| C++ / C | ✅ | ✅ | 自带 `bits/stdc++.h` 兼容头（macOS 无该头） |
-| JavaScript / TypeScript | ✅ | ✅ | TS 用 Node 内置 `stripTypeScriptTypes`（需 Node ≥ 22.7） |
-| Java | ✅ | ✅ | 需本地 JDK |
-| Go / Rust | ✅ | ✅ | 需本地 `go` / `rustc` |
-| Ruby | ✅ | — | |
-| C# / Kotlin / Swift / PHP / Dart / Scala / Elixir / Erlang / Racket / 仓颉 | — | — | 用「官方运行 / 提交」+ AI 脚手架 |
-
-所有语言都支持**官方运行/提交**（走 LeetCode 自己的判题机），本地脚手架缺失不影响提交。
-
-### 本地调试需要装对应的调试扩展
-
-调试器类型（`debugpy` / `cppdbg` / `java` / `go` / `lldb` …）都不是 VS Code 内置的，由扩展注册：
-
-| 语言 | 需要的扩展 | 调试器类型候选（顺序尝试） |
-|---|---|---|
-| Python | `ms-python.debugpy`（Python Debugger）或 `ms-python.python` | `debugpy` → `python` |
+| Python | `ms-python.debugpy` 或 `ms-python.python` | `debugpy` → `python` |
 | JavaScript / TypeScript | 内置 js-debug | `node` → `pwa-node` |
-| C / C++ | `ms-vscode.cpptools`（C/C++）或 `vadimcn.vscode-lldb`（CodeLLDB） | `cppdbg` → `lldb` |
+| C / C++ | `ms-vscode.cpptools` 或 `vadimcn.vscode-lldb` | `cppdbg` → `lldb` |
 | Rust | `vadimcn.vscode-lldb` | `lldb` |
 | Java | `redhat.java` | `java` |
 | Go | `golang.go` | `go` |
 | Ruby | `shopify.ruby-lsp` | `rdbg` |
 
-点「调试」时插件会**先检查扩展是否已安装**：
+---
 
-- 有可用调试器 → 直接启动（`debugpy` 不可用会自动降级到 `python` 等候选）；
-- 一个都没有 → 不再抛「配置的类型 debugpy 不受支持」，而是弹出
-  **「无法启动调试。缺少调试扩展：ms-python.debugpy…」**，并给两个按钮：`搜索扩展` / `改为本地运行`。
-- 装了但启动失败 → 逐个候选尝试，全失败时同样给出安装指引 + 输出面板里的详细日志。
+## 截图
 
-> Cursor 默认**没有**装 Python / C++ / Java 调试扩展，所以第一次用 Python 调试会看到上述提示，装一个 Python Debugger 即可。
+<table>
+<tr>
+<td width="50%"><img src="docs/images/ide-full.png" alt="完整界面"><br/><sub><b>完整界面</b>：左题面 / 右代码 / 底部测试结果（真实截图）</sub></td>
+<td width="50%"><img src="docs/images/left-pane.png" alt="左栏题面"><br/><sub><b>左栏</b>：焦点模式下只剩题面，线上 IDE 自动隐藏</sub></td>
+</tr>
+<tr>
+<td><img src="docs/images/bottom-panel-cases.png" alt="测试用例"><br/><sub><b>测试用例</b>：来自官方示例输入 + 题面输出解析，可手改 <code>cases.json</code></sub></td>
+<td><img src="docs/images/bottom-panel-results.png" alt="测试结果"><br/><sub><b>测试结果</b>：逐用例实际 / 期望、耗时、stdout，失败自动展开</sub></td>
+</tr>
+</table>
 
-**调试时的报错信息（v0.2.5）**：调试终端里不再只有一行转义 JSON，而是：
+---
 
-```
-[LeetCode] 用例 1 · 运行出错
-[LeetCode]   TypeError: object of type 'ListNode' has no len()
-[LeetCode]   在 solution.py:3（addTwoNumbers）
-[LeetCode]   提示：LeetCode 的链表/树参数是 ListNode / TreeNode 对象（.val / .next / .left / .right），不是 list，不能对它用 len()。
-```
+## 安装
 
-- 只调试**单个用例**时会带 `--raise-on-error`：异常照常抛出，调试器会停在出错的那一行（可看栈帧/变量）。
-- 底部面板「测试结果」和失败通知里也会附上同一句中文提示。
+### 环境要求
 
-**调试用哪个用例（v0.2.4）**：点「调试」时会让你选 —— `全部用例` / `某个用例` / `自定义输入…`
-（自定义可以写 `l1 = [2,4,3], l2 = [5,6,4]`，也能每行一个参数）。底部面板「测试用例」里每个用例右侧也有一个 `调试` 按钮，
-点它就只跑那一个用例。这样断点不会被别的用例先命中。
-
-**断点为什么现在能命中（v0.1.1 修复）**：
-
-| 语言 | 之前 | 现在 |
+| 项目 | 要求 | 说明 |
 |---|---|---|
-| Python | 调试入口用 `exec(compile(...))` 加载你的文件，不少调试器不会把断点绑到这种代码对象 | 调试专入口 `_lc_debug_runner.py` 用**标准 `import`** 加载你的文件（preamble 注入 `builtins`，你的文件一行都不用改），断点稳定命中 |
-| C / C++ | 编译用 `-O2`，没有调试信息 | 调试时自动改成 `-g -O0 -fno-omit-frame-pointer` |
-| Rust | `rustc -O` | 调试时 `-g -C opt-level=0` |
-| Java / Go | 无 `-g` / 优化内联 | 调试时加 `-g` / `-gcflags=all=-N -l` |
-| JS / TS | 已经用 `filename` 映射到你的文件 | 不变（本来就命中） |
+| 编辑器 | **VS Code ≥ 1.90** 或 **Cursor** | 两者都实测通过（VS Code 1.138 / Cursor 1.128） |
+| 操作系统 | macOS / Linux / Windows | 截图与验证在 macOS（arm64）完成 |
+| Node.js | 仅**从源码构建**时需要（≥ 20） | 安装 vsix 不需要 |
+| 网络 | 能访问 `leetcode.cn` | 代码只在本地与目标站点之间流动 |
 
-另外调试时会用探测到的同一个解释器（`python` 字段传绝对路径），避免「调试器用另一个 python」。
+**按语言准备本地工具链**（只影响「本地运行 / 调试」，官方判题不受影响）：
 
-**Python 版本（v0.2.4）**：LeetCode 新版 Python3 模板会用 PEP 604 注解（`ListNode | None`），这需要 **3.10+**；
-macOS 自带的 `/usr/bin/python3` 是 3.9，直接跑会 `TypeError: unsupported operand type(s) for |`。现在：
+| 语言 | 需要准备 | 一键安装（macOS） |
+|---|---|---|
+| Python 3 | **推荐 Python ≥ 3.10**（LeetCode 新模板会用 `ListNode \| None`） | `brew install python` |
+| C / C++ | `clang` / `gcc`（或 Xcode Command Line Tools） | `xcode-select --install` |
+| Java | JDK 17+ | `brew install openjdk` |
+| JavaScript / TypeScript | Node.js ≥ 20 | `brew install node` |
+| Go | Go 1.20+ | `brew install go` |
+| Rust | rustc | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
+| Ruby | ruby | macOS 自带 `/usr/bin/ruby` |
 
-- 自动挑选 **最高的 3.10+** 解释器（本机会选中 `/opt/homebrew/bin/python3.13` 之类），本地运行与调试用同一个；
-- 想指定的话设置 `lcLocal.python.path`；
-- 即使只能用 3.9，注入的 `ListNode`/`TreeNode`/`Node` 也带了兼容 metaclass，`ListNode | None` 在 3.9 上同样可用。
+### 方式 A：安装 vsix（推荐）
+
+```bash
+# VS Code
+code --install-extension leetcode-local-ide-0.4.0.vsix --force
+
+# Cursor
+cursor --install-extension leetcode-local-ide-0.4.0.vsix --force
+```
+
+> 也可以在编辑器里：`扩展` 面板 → 右上 `…` → `从 VSIX 安装…`。
+> 扩展 ID 是 `xialc.leetcode-local-ide`（历史原因保留），显示名为 **LeetCode Dojo**。
+
+### 方式 B：从源码构建
+
+```bash
+git clone https://github.com/captainedV/leetcode-dojo.git
+cd leetcode-dojo
+npm ci
+npm run package          # 产出 leetcode-local-ide-0.4.0.vsix
+code --install-extension leetcode-local-ide-0.4.0.vsix --force
+```
+
+### 让 IDE 能在题目目录里调用到你的工具链（重要）
+
+GUI 启动的 VS Code / Cursor 常常拿不到你 shell 里的 `PATH`（Homebrew、nvm、pyenv 都不在），表现为"找不到命令"。本插件按四级顺序解析可执行文件：
+
+```
+进程 PATH → 登录 shell 的 PATH（bash -lc）→ 常见安装目录（Homebrew、/usr/local、~/.pyenv/shims、~/.cargo/bin …）→ 缓存
+```
+
+进入题目后执行一次 **`LeetCode Dojo: 显示诊断信息`**，会打印：
+
+```
+langToolchain(python3)=齐全        # 缺什么会直接写出来，并给出安装命令
+debuggers(python3)=debugpy         # 当前可用的调试器类型
+layout=#1(col1,激活)=[题面] | #2(col2)=solution.py
+```
+
+如果自动挑选的 Python 版本不合适（例如系统只有 3.9），用设置项显式指定：
+
+```jsonc
+// settings.json
+{
+  "lcLocal.python.path": "/opt/homebrew/bin/python3.13"
+}
+```
 
 ---
 
-## 5. 限制 AI 补全（这个插件的重点之一）
+## 快速上手
 
-直接让 AI 写完整题会让练习失去意义；完全不给提示，在 vibe coding 时代又记不住 API 细节。所以做成**分级 + 硬约束**：
+1. 点状态栏 **`LeetCode`**（或命令面板 `LeetCode Dojo: 进入 LeetCode 模式`）。
+2. 左栏加载 LeetCode 题库 —— **在左栏里直接登录**（登录态会保存，下次打开免登录）。
+3. 点进任意题目（题库、**学习计划**、每日一题、竞赛题单都行）：右栏自动创建并打开本地文件，左栏只剩题面。
+4. 写代码，`⌘/Ctrl+S` 保存即同步到网页；网页自己的「运行 / 提交」也会用你本地的代码。
+5. 用底部面板或快捷键：**本地运行** / **调试** / **官方运行** / **提交**。
 
-| 级别 | 行为 |
+| 快捷键（macOS） | 作用 |
 |---|---|
-| `off` | 本扩展完全不提供补全 |
-| `signature`（默认） | 只提示**你正在调用的那个 API** 的签名/用法（内置 274 条刷题高频 API：`bisect_left`、`heapq` 堆操作、`sort(key=)` 的坑、`priority_queue` 大小顶堆写法、`HashMap.getOrDefault`…）。**不生成任何算法逻辑** |
-| `line` | 允许补全**当前这一行**，且必须通过硬规则过滤：不能换行、不能超过字符上限、不能开新块（`:`/`{`/`do`）、不能出现 2 个以上控制流关键字、不能出现函数/类定义、不能与后文重复、只能单语句 |
-
-另外：
-
-- 进模式时自动压制其他 AI 助手在题目目录里的补全：`github.copilot.enable`、`github.copilot.inlineSuggest.enable`、`github.copilot.nextEditSuggestions.enabled`，写入 `<题目根>/.cursorignore`；退出时**只还原自己改过的键**。
-- **诚实的限制**：Cursor 的 Tab 补全没有官方的工作区级开关，插件无法在你的练习时段自动关掉它，需要你在 Cursor 设置里手动关（或临时停用）。`lcLocal.hint.level=off` 只关闭**本扩展**提供的补全。
-
-参考的既有方案：Copilot/IntelliCode 的「单行 inline suggestion」思路、LeetCode 官方 Hint 分级、以及 `leetcode local debug` 类项目在本地复刻评测环境 preamble 的做法。本项目的取舍是：**默认只给 API 级提示，把「写出一行有效代码」的门槛留给你自己**。
+| `⌘⌥Enter` | 本地运行测试 |
+| `⌘⌥S` | 提交到 LeetCode |
+| `⌘⌥H` | 获取提示（不直接给答案） |
 
 ---
 
-## 6. 配置项（`settings.json`）
+## 使用指南
+
+<details>
+<summary><b>切换到别的语言</b></summary>
+
+用左栏工具栏或底部面板的**语言下拉框**切换。会自动：
+
+- 用该语言的官方模板创建 / 打开对应文件（`solution.py` / `Solution.java` / `solution.cpp` …）
+- 把"当前语言"注入到官方运行 / 提交请求里
+
+</details>
+
+<details>
+<summary><b>本地测试：用例从哪来</b></summary>
+
+1. **官方元数据**：GraphQL 的 `metaData`（函数名、每个参数名与类型、返回类型）+ `codeSnippets`（官方模板）+ `exampleTestcases`（官方判题机用的示例输入）
+2. **期望输出**：从题面 HTML 解析 `Input/Output/输入/输出`（兼容 `<pre>` 与 `<p><code>` 两种写法），按**输入内容**匹配，避免题面顺序错位
+3. **生成脚手架**：只在 `local/` 下生成测试驱动，**绝不修改你的代码文件**；统一 `__LC_RESULT__` 协议
+4. **比较策略**：先严格比较；严格不等时再做**乱序等价**比较（多解题目如两数之和、三数之和、全排列、异位词分组），命中会标注「内容一致但顺序不同」
+5. **AI 兜底**：设计类题目或特殊输入，可用自己的 API Key 让 AI 生成脚手架（输出经文件名 / 命令白名单校验）
+
+用例可以在 `leetcode/<题号>.<slug>/cases.json` 里手改（加自己的边界用例）。
+
+</details>
+
+<details>
+<summary><b>调试：选用例 / 自定义输入</b></summary>
+
+点「调试」会先让你选：`全部用例` / `某个用例` / `自定义输入…`
+
+- 自定义输入支持 `l1 = [2,4,3], l2 = [5,6,4]`、每行一个参数、顶层逗号三种写法
+- 底部面板「测试用例」每个用例右侧有 `调试` 按钮，点它只跑那一个用例
+- 只调试单个用例时会带 `--raise-on-error`：**异常照常抛出，调试器会停在出错那一行**
+- Python 用**标准 `import`** 加载你的文件（`typing` / `ListNode` / `TreeNode` 注入 `builtins`），你的文件一行都不用改，断点稳定命中
+- 编译类语言调试时自动加调试信息：C/C++ `-g -O0`、Rust `-g -C opt-level=0`、Java `-g`、Go `-gcflags=all=-N -l`
+
+</details>
+
+<details>
+<summary><b>官方运行 / 提交，结果在哪看</b></summary>
+
+- 底部面板会自动打开并切到「测试结果」；失败时同时打开输出面板，并在弹窗里给出首个失败用例
+- 面板被关掉：工具栏 `面板` 按钮、编辑器标题栏图标，或命令 `LeetCode Dojo: 打开底部面板`
+- 完整日志：`LeetCode Dojo: 显示输出面板`
+
+</details>
+
+<details>
+<summary><b>登录态与退出登录</b></summary>
+
+- Cookie 存**系统钥匙串**（不可用时退回 `globalStorage/*.json`）；代理端口固定复用，站点 localStorage（语言、草稿）一并保留
+- 重开 IDE 会自动回到上次那道题
+- 想清空：命令 `LeetCode Dojo: 退出登录`（同时让浏览器把旧 cookie 置为过期）
+
+</details>
+
+---
+
+## AI 补全限制（详解）
+
+### 三档强度
+
+| 档位 | 行为 | 需要 API Key |
+|---|---|---|
+| `off` | 本扩展不提供任何补全 | 否 |
+| `signature`（默认） | 只补「你正在调用的那个 API」的**名字 + 参数名**；补全列表里给出签名 / 坑 / 返回类型 / 示例 | 否 |
+| `line` | 允许 AI 补**当前这一行**，必须通过 8 条硬规则；没有 Key 时自动退化为 `signature` | 是 |
+
+签名库覆盖 **274 条**刷题高频 API：`python3` 56 · `javascript` 50 · `rust` 50 · `cpp` 44 · `java` 38 · `golang` 36。会识别接收者（输入 `bisect.` / `Math.` / `heapq.` / `arr.` 时只给该模块下的 API），空前缀不猜以避免刷屏。
+
+### 8 条硬规则（纯文本判断，任一不过即丢弃）
+
+| # | 规则 | 为什么 |
+|---|---|---|
+| 1 | 空文本 / 含换行 | 多行 = 整段解法 |
+| 2 | 长度 > `hint.maxLineChars`（默认 80） | 一行装不下就不是"单行补全" |
+| 3 | 括号配平为负，或结尾仍有未闭合括号 | 想开一个块 |
+| 4 | 以 `:` `{` `do` `then` 结尾 | 块开头 |
+| 5 | 语句位置上的控制流关键字 ≥ 2 | 在写逻辑分支（唯一豁免：Python 的 `a if c else b` 内联条件） |
+| 6 | 出现 `class` / `def` / `function` / `public` / `fn` 等定义 | 在写函数 / 类 |
+| 7 | 与光标前已写内容、或光标后已有内容重复 | 无效候选 |
+| 8 | 语句数 > 1（只数顶层分号，字符串里的不算） | 只允许补一条语句 |
+
+被拦下时输出面板会写清原因，例如 `[hint] AI 候选被规则拦下：候选包含 2 条语句（只允许补一条）`。
+
+### 开启 / 关闭
+
+```jsonc
+{
+  "lcLocal.hint.level": "signature",     // off | signature | line
+  "lcLocal.hint.maxLineChars": 80,
+  "lcLocal.ai.enabled": true,
+  "lcLocal.ai.baseUrl": "https://api.deepseek.com/v1",   // 任意 OpenAI 兼容接口
+  "lcLocal.ai.model": "deepseek-chat",
+  "lcLocal.ai.apiKey": "",               // 或用环境变量 LC_LOCAL_AI_KEY
+  "lcLocal.aiGuard.enabled": true        // 进入练习模式时压制 Copilot / Cursor
+}
+```
+
+命令 `LeetCode Dojo: 设置 AI API Key` 会引导填写并启用；`LeetCode Dojo: 开启/关闭 AI 补全限制` 可临时切换。
+
+> **关于 Cursor Tab**：Cursor 没有提供工作区级的 Tab 补全开关，插件无法在练习时段替它关掉。`hint.level=off` 只关闭本扩展的补全；要彻底静音请在 Cursor 设置里手动关掉 Tab，或临时停用 Copilot。
+
+---
+
+## 配置项
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `lcLocal.site` | `leetcode.cn` | 站点；`leetcode.com` 走 API 模式 |
-| `lcLocal.hint.level` | `signature` | `off` / `signature` / `line` |
-| `lcLocal.hint.maxLineChars` | `80` | `line` 级单行补全上限 |
-| `lcLocal.ai.enabled` | `false` | 启用 AI（提示 / 行补全 / AI 脚手架） |
-| `lcLocal.ai.baseUrl` | `https://api.deepseek.com/v1` | 任意 OpenAI 兼容接口 |
-| `lcLocal.ai.model` | `deepseek-chat` | |
+| `lcLocal.site` | `leetcode.cn` | 站点。`leetcode.com` 走 API 模式（Cloudflare 拦截文档，无法内嵌） |
+| `lcLocal.hint.level` | `signature` | AI 补全强度：`off` / `signature` / `line` |
+| `lcLocal.hint.maxLineChars` | `80` | `line` 档单行补全字符上限 |
+| `lcLocal.ai.enabled` | `false` | 启用 AI（提示 / 行补全 / 脚手架） |
+| `lcLocal.ai.baseUrl` | `https://api.deepseek.com/v1` | OpenAI 兼容接口 |
+| `lcLocal.ai.model` | `deepseek-chat` | 模型名 |
 | `lcLocal.ai.apiKey` | `""` | 也可用环境变量 `LC_LOCAL_AI_KEY` |
+| `lcLocal.aiGuard.enabled` | `true` | 压制其它 AI 补全 |
+| `lcLocal.python.path` | `""` | 指定 Python 解释器；留空则自动挑 3.10+ 中的最高版本 |
 | `lcLocal.run.defaultLang` | `python3` | 进题目时的默认语言 |
 | `lcLocal.run.timeoutMs` | `20000` | 本地测试超时 |
-| `lcLocal.proxy.port` | `0` | 内嵌网页代理端口（0=自动） |
-| `lcLocal.proxy.injectBridge` | `true` | 是否注入桥接（关掉就退化成普通浏览器） |
-| `lcLocal.editor.hideSiteEditor` | `true` | 是否用覆盖层替换网页编辑器 |
-| `lcLocal.aiGuard.enabled` | `true` | 是否压制其他 AI 补全 |
-| `lcLocal.workspace.subdir` | `leetcode` | 题目存放目录 |
-| `lcLocal.proxy.port` | `0` | 首次使用的代理端口；之后固定复用（存于 globalState） |
-
-命令：`LeetCode Local: 显示诊断信息` 会打印当前站点/代理端口/登录态/cookie 名/当前题目/提示级别/AI 状态/工具链与可用调试器。
+| `lcLocal.layout.autoSplit` | `true` | 自动左右分栏 |
+| `lcLocal.layout.leftRatio` | `0.45` | 左栏宽度比例 |
+| `lcLocal.layout.lockLeftGroup` | `true` | 尽量让新文件落在右栏 |
+| `lcLocal.proxy.port` | `0` | 首次使用的代理端口，之后固定复用 |
+| `lcLocal.proxy.injectBridge` | `true` | 是否注入桥接脚本（关掉即退化为普通浏览器） |
+| `lcLocal.editor.hideSiteEditor` | `true` | 焦点模式：隐藏线上 IDE |
+| `lcLocal.workspace.subdir` | `leetcode` | 题目目录名（相对工作区根） |
 
 ---
 
-## 7. 架构
+## 工作原理
 
+<img src="docs/images/architecture.png" alt="架构图" width="100%">
+
+几个关键实现（都是实测撞出来的，详见 [`docs/verification`](docs/verification)）：
+
+1. **必须代理 CDN 并改写文本**：站点用绝对地址 `https://leetcode.cn/...` 做路由跳转，不改写的话 iframe 会整页跳到真实站点、桥接直接失效。所以 `static.leetcode.cn` 的 JS/CSS 也经代理，并把 `https://leetcode.cn` 改写为代理源。
+2. **焦点模式要压 FlexLayout**：站点面板是绝对定位的 FlexLayout，只 `display:none` 会留白；必须同时把题面 tabset 拉到 100% 宽高，且**只在 `/problems/<slug>/` 生效**（避免误伤题库 / 学习计划列表）。
+3. **接管判题靠改请求体**，不靠点按钮：拦截 `POST /problems/{slug}/(interpret_solution|submit)/`（含 GraphQL 变体），替换 `typed_code` / `lang`，其余字段原样保留。
+4. **`window.open` 必须接管**：学习计划里的题目行不是链接，而是 `window.open()`；webview iframe 里 popup 会被拦，表现就是"点了没反应"。
+5. **布局守护的坑**：`TabInputWebview.viewType` 实际带 `mainThreadWebview-` 前缀，且 `workbench.action.lockEditorGroup` 在 VS Code 1.138 / Cursor 1.128 里不生效 —— 所以改成「监听 `tabGroups` + 把左栏普通文件搬回右栏」。
+6. **Python 调试必须走标准 import**：`exec(compile(...))` 加载的代码对象在部分调试器下不绑断点；调试入口改成 `importlib.import_module`，并把 `typing` / `ListNode` / `TreeNode` 注入 `builtins`（不修改你的文件）。
+
+---
+
+## 兼容性与验证状态
+
+**已实测**
+
+- **299 个自动化测试**（`npm test`）：题面解析、代理改写规则、判题请求识别 / 改写、9 种语言脚手架的**真实编译执行**（Python 3.9 / 3.13、Node 25、Apple clang 17、Ruby 2.6 真跑；Java / Go / Rust 因本机无工具链只做结构断言并 skip）、AI 提示词与脚手架输出校验、8 条硬规则、布局与 viewType 回归
+- **端到端集成测试**（真实访问 `leetcode.cn`）：激活 → 起代理 → 建面板 → 路由 → 建文件 → 推送代码 → 本地 Python **3/3 通过** → 切 C++ → 本地编译 **3/3 通过** → 调试降级链路 → 底部面板驱动 → 退出
+- **真实宿主验证**（VS Code 1.138 / Cursor 1.128，隔离 profile + 自检探针）：真实 `tabGroups` 状态为「左栏题面 / 右栏 `solution.py`」，人为把文件开到左栏后**自动搬回右栏**
+
+**尚未验证（需要你的环境 / 账号）**
+
+- 真实**登录 + 提交**的完整链路（无账号凭据；端点与请求体已按站点前端产物核对，桥接与 REST 直连两条通道都实现）
+- Java / Go / Rust 脚手架的**真实编译运行**（本机无 JDK / go / rustc）
+- `leetcode.com` 的内嵌（Cloudflare 固定拦截，只支持 API 模式）
+- Windows 上的完整回归（代码已做跨平台处理，但未实测）
+
+---
+
+## 常见问题
+
+<details>
+<summary><b>左栏空白 / 一直转圈</b></summary>
+
+看 `输出 → LeetCode Dojo`。若是 Cloudflare 人机验证，说明你用的是 `leetcode.com`，把 `lcLocal.site` 切回 `leetcode.cn`。
+
+</details>
+
+<details>
+<summary><b>底部面板看不到</b></summary>
+
+进入模式时插件会自动打开；若被关掉，点左栏 `面板` 按钮或执行 `LeetCode Dojo: 打开底部面板`。个别发行版会隐藏扩展面板容器，先执行一次 `查看 → 面板` 展开面板区。
+
+</details>
+
+<details>
+<summary><b>点调试提示"配置的类型 debugpy 不受支持"</b></summary>
+
+`debugpy` 由 `ms-python.debugpy` 提供，Cursor 默认没装。插件会提示缺少哪个扩展，并给 `搜索扩展` / `改为本地运行` 两个按钮（不会直接抛原始错误）。装一个 Python Debugger 即可。
+
+</details>
+
+<details>
+<summary><b>报 TypeError: unsupported operand type(s) for |</b></summary>
+
+你的代码用了 `ListNode | None`（PEP 604），需要 Python ≥ 3.10，而系统 `python3` 可能是 3.9。插件会自动挑最高的 3.10+ 解释器；若本机只有 3.9，也可以用设置 `lcLocal.python.path` 指定。另外注入的 `ListNode` / `TreeNode` 自带兼容 metaclass，`ListNode | None` 在 3.9 上同样可用。
+
+</details>
+
+<details>
+<summary><b>提示"找不到命令 node / python3"</b></summary>
+
+GUI 启动的编辑器 `PATH` 通常不含 Homebrew / nvm。插件会按「进程 PATH → 登录 shell → 常见安装目录」解析，仍找不到时提示里会直接给安装命令。装好后重开窗口。
+
+</details>
+
+<details>
+<summary><b>学习计划里点题目没反应</b></summary>
+
+已在 0.2.6 修复（题目行是 `window.open` 弹窗，webview 里会被拦 → 改为面板内跳转）。若仍异常，请附上 `LeetCode Dojo: 显示诊断信息` 的输出。
+
+</details>
+
+<details>
+<summary><b>分栏被打乱了</b></summary>
+
+执行 `LeetCode Dojo: 重置左右分栏布局`。平时有「布局守护」：左栏出现普通文件会自动搬回右栏。
+
+</details>
+
+<details>
+<summary><b>本地没通过，但 LeetCode 上是 Accepted</b></summary>
+
+多半是多解题目（顺序不同），结果里会标注「内容一致但顺序不同」。如果差异真实存在，把输出面板里的实际 / 期望贴到 issue。
+
+</details>
+
+---
+
+## 路线图
+
+- [ ] 设计类题目（LRU / MedianFinder）的本地脚手架
+- [ ] 当前行 → 相关 API 提示的上下文联动
+- [ ] 多显示器 / 多根工作区的布局策略细化
+- [ ] Windows 全量回归 + CI 矩阵
+- [ ] 发布到 VS Code Marketplace / Open VSX
+
+想法欢迎开 issue；PR 请先看 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+
+---
+
+## 开发
+
+```bash
+npm ci
+npm run build        # esbuild 打包扩展 + webview + 注入脚本
+npm run watch        # 监听重建
+npm run typecheck    # tsc --noEmit
+npm test             # 299 个测试
+npm run package      # 产出 vsix
 ```
-扩展宿主 (dist/extension.js)
-├── LcSession            会话编排：进入/退出、题目切换、命令
-├── LeetCodeProxy        本地反向代理 127.0.0.1:port
-│   ├─ 文档转发 + 去 X-Frame-Options/CSP + 注入 bridge.js
-│   ├─ CookieJar（浏览器登录态 ↔ 扩展宿主共用，可持久化）
-│   ├─ CDN 转发 + 文本内绝对 URL 改写（关键：防止页面跳出代理源）
-│   └─ 缓存（CDN 静态资源）
-├── LcClient             GraphQL 拉题 + REST 直连判题（interpret_solution / submit / check）
-├── ProblemStore         题目目录、meta.json、cases.json、模板快照
-├── runner/              9 种语言的本地脚手架 + 执行器（编译/运行/协议解析/结果比较）
-└── ai/                  分级提示、受限行补全（274 条签名库 + 硬规则闸门）、AI 脚手架、AI 守卫
-Webview (dist/media/shell.js + shell.css)  左栏：工具栏 + iframe → 代理
-注入脚本 (dist/media/bridge.js → 页面内)     覆盖层替换编辑器、改包 fetch/XHR 接管判题请求、路由同步
-```
 
-几个关键实现细节（都是实测踩出来的）：
+调试扩展本身：`npm run build` 后执行 `code --extensionDevelopmentPath=.`。
 
-1. **必须代理 CDN 并改写文本**：站点前端会用绝对地址 `https://leetcode.cn/...` 做路由跳转，若不改写，iframe 会整页跳到真实站点、桥接直接失效。所以 `static.leetcode.cn` 的 JS/CSS 也经代理，并把 `https://leetcode.cn` 改写成代理源、`https://static.leetcode.cn` 改写成 `/__lc/cdn/...`。
-2. **覆盖层不能塞进 `#editor`**：React 每次重渲染都会删掉非它管理的子节点（实测），所以覆盖层挂在 `document.body` 上、`position:fixed`，用 400ms 心跳对齐到 Monaco 的 `getBoundingClientRect()`（实测与编辑器矩形逐像素一致）。
-3. **接管判题靠改请求体**，不靠点按钮：拦截 `POST /problems/{slug}/(interpret_solution|submit)/`（含 GraphQL 变体），替换 `typed_code` / `lang`，其余字段原样保留；命中后把 `submission_id` 与后续 `/submissions/detail/{id}/check/` 的结果回传给 IDE。
-4. **登录态复用**：代理的 CookieJar 既服务浏览器请求，也让扩展宿主能直连 REST 判题接口（`X-CSRFToken` 取自 `csrftoken` cookie），所以「官方运行/提交」在网页桥接失效时依然可用。
+界面截图素材：`npx vitest run test/docs/uiSnapshot.test.ts` 会把现有 UI 的 HTML 导出到临时目录，便于用真实 Chromium 重新截图（保证 README 素材与代码同源）。
 
 ---
 
-## 8. 验证状态（诚实版）
+## 致谢与免责声明
 
-已实测：
+- 灵感来自 `vscode-leetcode`、`leetcode-cli` 等前辈，以及"在本地复刻评测机 preamble"的各类刷题模板；AI 限制思路参考了 inline suggestion 的单行补全与 LeetCode 官方 Hint 分级。
+- 本项目**不是** LeetCode / 力扣官方产品。请遵守目标站点的服务条款，仅用于**个人练习**。
+- 登录态与代码只存在本机；只有你主动点「官方运行 / 提交」时代码才会发往 LeetCode；只有你主动使用 AI 功能时，题目与代码才会发给你自己配置的服务商。
 
-- **220 个自动化测试全绿**（`npm test`）：解析器、cookie 罐、代理改写规则、判题请求识别/改写、9 种语言脚手架的**真实编译执行**（Python 3.9 / Node 25 / Apple clang 17 / Ruby 2.6 在本机真跑；Java·Go·Rust 因本机无工具链只做结构断言并 skip）、AI 提示词与脚手架输出校验、受限补全闸门的 8 条硬规则。
-- **端到端集成测试**（`test/integration/extension.test.ts`，真实访问 leetcode.cn）：激活 → 起代理 → 建面板（含 CSP）→ 模拟页面路由 → 自动建 `001.two-sum/solution.py` 与 `cases.json`/`problem.md` → 推送代码给页面 → **本地 python3 跑 3 用例全过** → 切 C++ 建 `solution.cpp` → **本地 C++ 编译跑 3 用例全过** → 诊断 → 退出。
-- **真实 Chromium 验证内嵌页面**（Playwright + 打包后的 bridge.js）：`leetcode.cn` 题目页在代理后完整渲染（标题「1. 两数之和」、`window.monaco` 存在、2 个 model），覆盖层稳定盖住编辑器且矩形与 Monaco **完全一致**，页面不再跳出代理源。截图见 `docs/verification/leetcode-mode.png`。
-- **打包后的 bundle 可加载**：用 vscode 替身 require `dist/extension.js`，`activate()` 注册 19 个命令、建面板、正常退出。
+## License
 
-**尚未验证（需要你的账号/环境）**：
-
-- **登录与真实提交**：无账号凭据，未跑过真实 `submit` 的完整链路（请求体改写与端点已按前端产物核对，桥接/直连两条路都实现并可从诊断信息自查）。
-- **Cursor 里的实际体验**：扩展已装入 Cursor，但 Cursor Tab 补全的行为只能由你手动观察（见第 5 节）。
-- **Java / Go / Rust** 本地脚手架：本机无 JDK/go/rustc，未真正编译运行过。
-- **IDE 内的 webview iframe**：浏览器中验证的是同一个页面（iframe 内容与顶层页面一致），webview 的 CSP `frame-src` 已在集成测试中断言。
-
----
-
-## 9. 常见问题
-
-- **左栏空白/一直转圈**：看 `输出 → LeetCode Local`。若是 Cloudflare 验证，说明你选了 `leetcode.com`，切回 `leetcode.cn`。
-- **本地测试提示“未判定”**：说明题面里没解析到该用例的期望输出（部分新题/会员题）。可以在 `cases.json` 里手写 `expected`，或用 `LeetCode Local: AI 生成测试脚手架`。
-- **学习计划里点题目没反应**：v0.2.6 已修（题目行是 `window.open` 弹窗，IDE 里会被拦 → 改成面板内跳转）；若仍异常请把 `LeetCode Local: 显示诊断信息` 的输出发我。
-- **点提交没反应 / 提示未登录**：登录态会保存，但 LeetCode 自己的会话过期后需要重新登录；先 `LeetCode Local: 刷新登录状态`，仍不行就在左栏网页里重新登录一次。
-- **提示「找不到命令 node / python3」**：GUI 启动的编辑器 PATH 常常不含 Homebrew/nvm。
-  插件会按「进程 PATH → 登录 shell → 常见安装目录」顺序找可执行文件，仍找不到时提示里会直接给出安装命令
-  （`brew install node` / `xcode-select --install` 等）。装好后重开窗口即可。
-- **点调试提示需要扩展**：见上面「本地调试需要装对应的调试扩展」表；也可以先点「本地运行」。
-- **本地未通过但 LeetCode 提交 Accepted**：如果输出里标注了「内容一致但顺序不同」就是宽松通过；
-  若是别的差异，把输出面板里的实际/期望值贴给我，或把 `cases.json` 的 `expected` 改成题面原值。
-- **网页编辑器没被替换**：`lcLocal.editor.hideSiteEditor` 是否为 `true`；覆盖层被关掉时点工具栏「刷新」恢复。
-- **macOS 无 `bits/stdc++.h`**：已自动生成兼容头，无需处理。
-
-## 10. 隐私
-
-- 代码只在你本机、以及你主动点击「官方运行/提交」时发往 LeetCode。
-- AI 功能只有在你自己配置了 API Key 且显式触发时才会把**当前题目与代码**发给你配置的服务商（`lcLocal.ai.baseUrl`，默认 DeepSeek）；`hint.level=off` + `ai.enabled=false` 时完全离线。
-- 登录 Cookie 保存在扩展的 `globalStorage` 目录，仅用于本地代理与 LeetCode 接口。
+[MIT](LICENSE) © 2026 captainedV

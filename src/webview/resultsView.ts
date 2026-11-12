@@ -224,7 +224,7 @@ export class ResultsView implements vscode.WebviewViewProvider {
     }
     const visible = !!this.view?.visible;
     this.log(
-      `[panel] 底部面板 reveal ${visible ? '成功' : '失败：可手动执行「LeetCode Local: 打开底部面板」或 查看→面板→LeetCode'}`,
+      `[panel] 底部面板 reveal ${visible ? '成功' : '失败：可手动执行「LeetCode Dojo: 打开底部面板」或 查看→面板→LeetCode'}`,
     );
     return visible;
   }

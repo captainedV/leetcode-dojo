@@ -256,7 +256,7 @@ export class LcSession implements vscode.Disposable {
       { label: '$(close) 退出 LeetCode 练习模式', description: '关闭内嵌代理并还原编辑器设置', cmd: 'lcLocal.exit' },
     ];
     const picked = await vscode.window.showQuickPick(items, {
-      title: 'LeetCode Local IDE 快捷面板',
+      title: 'LeetCode Dojo 快捷面板',
       placeHolder: activeLabel,
     });
     if (picked) {
@@ -333,7 +333,7 @@ export class LcSession implements vscode.Disposable {
     try {
       const visible = await this.resultsView.reveal({ focusView: false });
       if (!visible) {
-        this.log('[panel] 底部面板仍未显示，可手动：查看 → 面板 → LeetCode，或执行命令「LeetCode Local: 打开底部面板」');
+        this.log('[panel] 底部面板仍未显示，可手动：查看 → 面板 → LeetCode，或执行命令「LeetCode Dojo: 打开底部面板」');
         void vscode.window
           .showInformationMessage(
             '测试用例 / 结果面板没能自动打开。可以手动打开它（查看 → 面板），或把结果显示在输出面板里。',
@@ -1859,7 +1859,7 @@ export class LcSession implements vscode.Disposable {
     lines.push(`debuggers(${lang})=${usable.map((c) => c.type).join(',') || '无可用'}`);
     if (blocked.length) lines.push(`  需要扩展：${describeBlocked(blocked)}`);
     lines.push(`resultsPanel=${this.resultsView.isResolved ? '已连接' : '未创建（可能被关闭）'}`);
-    lines.push(`outputChannel=已创建（命令「LeetCode Local: 显示输出面板」可打开）`);
+    lines.push(`outputChannel=已创建（命令「LeetCode Dojo: 显示输出面板」可打开）`);
     return lines.join('\n');
   }
 
