@@ -155,3 +155,27 @@ popup 次数: 0        bridgeAlive: true      focus: true      editorOnScreen: f
 ```
 
 新增测试：`classifyLink` 5 例（同站/站外/javascript:/空链接/下载链接）。总计 289 passed。
+
+
+## 12. v0.3.1：自动分栏「看起来没解决」的真正原因
+
+用**环境变量门控的自检探针**（`LC_LOCAL_SELFTEST=1` → 真实宿主里自动 enter + 打开题目 + 抢占左栏，
+再把 `tabGroups` 真实状态 dump 成 JSON）在 VS Code 1.138 与 Cursor 1.128 里各跑一遍，得到两个硬结论：
+
+1. **分栏本身是成的**：`after-problem` 阶段两栏分别是 `WEB:LC 1. Two Sum` 与 `solution.py`。
+2. **但「锁左栏」不生效**：两个宿主里 `tabGroups.all[i].isLocked` 始终为 `false`；
+   且 `TabInputWebview.viewType` 实际值是 **`mainThreadWebview-lcLocal.site`**（带前缀），
+   早先 `=== 'lcLocal.site'` 的判断恒为 false —— 于是「布局守护」从来没启动过，
+   用户把文件开到左栏（点文件树 / 断点跳转）就会盖住题面，看起来就是"自动分栏没解决"。
+
+修复后自检结果（两个宿主一致）：
+
+```
+after-steal（人为把 solution.py 开到左栏）:
+  group#1 → WEB:LC 2. Add Two Numbers      ← 题面还在
+  group#2 → solution.py, solution.py        ← 文件被搬回右栏
+  日志: [layout] 已把左栏 1 个文件搬到右栏（守护/tabs）
+```
+
+配套改动：`isWebviewTab` 支持前缀匹配（新增 4 个回归测试）、左栏清理从"关闭"改为"搬到右栏"、
+`enter()` 里 `panel.reveal(true)` 确保题面落在第一栏。

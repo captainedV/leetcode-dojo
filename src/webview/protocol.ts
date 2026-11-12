@@ -21,6 +21,8 @@ export type ShellAction =
   | 'showLog'
   | 'toggleFocus'
   | 'openPanel'
+  | 'resetLayout'
+  | 'exitMode'
   | 'navBack'
   | 'navForward'
   | 'navHome'
@@ -38,26 +40,35 @@ export type HostToShell =
       type: 'init';
       frameUrl: string;
       title: string;
+      frontendId?: string;
+      difficulty?: string;
       lang: string;
       langs: LangOption[];
       signedIn: boolean;
+      signedInName?: string;
       fileName: string;
+      hideEditor?: boolean;
       harnessNote?: string;
     }
   | { type: 'bridge'; msg: HostMessage }
   | {
       type: 'state';
       lang?: string;
+      langs?: LangOption[];
       title?: string;
+      frontendId?: string;
+      difficulty?: string;
       fileName?: string;
       signedIn?: boolean;
       /** 已登录账号名（用于在左栏显示） */
       signedInName?: string;
+      hideEditor?: boolean;
       harnessNote?: string;
+      busy?: boolean;
     }
   | { type: 'reload' }
   | {
-      /** 运行/提交结果：直接显示在左栏工具栏下方，不用去翻输出面板 */
+      /** 运行/提交结果通知 */
       type: 'results';
       source: 'local' | 'judge';
       ok: boolean;

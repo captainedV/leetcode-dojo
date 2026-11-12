@@ -13,7 +13,7 @@
  */
 import * as vscode from 'vscode';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { LcQuestion, TestCase } from './types.js';
 import { buildTestCases, htmlToMarkdown, parseMetaData } from './parse.js';
@@ -99,16 +99,10 @@ export class ProblemStore {
   ): Promise<{ files: ProblemFiles; created: boolean; snippet: string }> {
     const files = await this.files(question, langSlug);
     const snippet = this.pickSnippet(question, langSlug);
-    const existed = existsSync(files.source.fsPath);
-    if (!existed) {
-      await this.writeFile(files.source, snippet || `// ${question.title}（未找到 ${langSlug} 模板）\n`);
-      this.log(`[workspace] 新建 ${files.source.fsPath}`);
-    }
-    // problem.md
+    // 先写元数据、题面与用例，最后落盘源代码文件，保证外部一旦观察到源代码出现，题目目录即完整可用
     if (!existsSync(files.readme.fsPath)) {
       await this.writeFile(files.readme, renderProblemMarkdown(question));
     }
-    // meta.json
     const meta = await this.readMeta(files.meta);
     const now = new Date().toISOString();
     const snippets = { ...(meta?.snippets ?? {}) };
@@ -126,10 +120,14 @@ export class ProblemStore {
       updatedAt: now,
     };
     await this.writeFile(files.meta, JSON.stringify(next, null, 2));
-    // cases.json（用户可改；已存在则不覆盖）
     if (!existsSync(files.cases.fsPath)) {
       const cases = buildTestCases(question);
       await this.writeFile(files.cases, JSON.stringify({ cases }, null, 2));
+    }
+    const existed = existsSync(files.source.fsPath);
+    if (!existed) {
+      await this.writeFile(files.source, snippet || `// ${question.title}（未找到 ${langSlug} 模板）\n`);
+      this.log(`[workspace] 新建 ${files.source.fsPath}`);
     }
     return { files, created: !existed, snippet };
   }
@@ -183,6 +181,28 @@ export class ProblemStore {
 
   async writeCases(files: ProblemFiles, cases: TestCase[]): Promise<void> {
     await this.writeFile(files.cases, JSON.stringify({ cases }, null, 2));
+  }
+
+  /**
+   * 按 slug 查找本地已存在的题目目录与代码文件（用于进入模式时秒开上次题目的右栏代码，无需等待网络）。
+   */
+  async findCachedProblemSource(slug: string): Promise<{ source: vscode.Uri; meta: ProblemMeta } | undefined> {
+    if (!slug) return undefined;
+    try {
+      const root = this.baseDir().fsPath;
+      if (!existsSync(root)) return undefined;
+      const entries = await readdir(root);
+      const hit = entries.find((name) => name.endsWith(`.${slug}`));
+      if (!hit) return undefined;
+      const dir = vscode.Uri.joinPath(this.baseDir(), hit);
+      const meta = await this.readMeta(vscode.Uri.joinPath(dir, 'meta.json'));
+      if (!meta) return undefined;
+      const source = vscode.Uri.joinPath(dir, this.sourceFileName(meta.langSlug || 'python3'));
+      if (!existsSync(source.fsPath)) return undefined;
+      return { source, meta };
+    } catch {
+      return undefined;
+    }
   }
 
   async readSource(files: ProblemFiles): Promise<string> {

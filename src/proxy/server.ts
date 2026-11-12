@@ -47,6 +47,14 @@ export interface ProxyOptions {
 }
 
 const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'transfer-encoding', 'upgrade']);
+const MAX_CDN_CACHE_BYTES = 48 * 1024 * 1024;
+
+interface CachedResponse {
+  status: number;
+  headers: Record<string, string | string[]>;
+  body: Buffer;
+  ts: number;
+}
 
 export class LeetCodeProxy {
   private server?: Server;
@@ -54,10 +62,9 @@ export class LeetCodeProxy {
   private bridgeSource = '';
   /** 待删除的浏览器 cookie（退出登录时用，一次生效） */
   private pendingCookieDeletions: string[] = [];
-  private cdnCache = new Map<
-    string,
-    { status: number; headers: Record<string, string | string[]>; body: Buffer; ts: number }
-  >();
+  private cdnCache = new Map<string, CachedResponse>();
+  private cdnCacheBytes = 0;
+  private inflightCdn = new Map<string, Promise<CachedResponse>>();
 
   constructor(private opts: ProxyOptions) {}
 
@@ -116,7 +123,12 @@ export class LeetCodeProxy {
   async stop(): Promise<void> {
     const server = this.server;
     this.server = undefined;
+    this.cdnCache.clear();
+    this.cdnCacheBytes = 0;
+    this.inflightCdn.clear();
     if (!server) return;
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     this.opts.log('[proxy] 已停止');
   }
@@ -217,30 +229,76 @@ export class LeetCodeProxy {
     const upstreamUrl = target ? `https://${target.host}${targetPath}` : `${site.origin}${targetPath}`;
     const isCdn = !!target;
     const cacheKey = isCdn ? upstreamUrl : '';
-    if (isCdn) {
+    if (isCdn && method === 'GET') {
       const cached = this.cdnCache.get(cacheKey);
       if (cached && Date.now() - cached.ts < 1000 * 60 * 30) {
         this.writeHead(res, cached.status, { ...cached.headers });
-        res.end(cached.body);
+        if (!res.writableEnded && !res.destroyed) res.end(cached.body);
+        return;
+      }
+      const pending = this.inflightCdn.get(cacheKey);
+      if (pending) {
+        const shared = await pending;
+        this.writeHead(res, shared.status, { ...shared.headers });
+        if (!res.writableEnded && !res.destroyed) res.end(shared.body);
         return;
       }
     }
-    const init: RequestInit = {
-      method,
-      headers,
-      redirect: 'manual',
-      signal: AbortSignal.timeout(30000),
-    };
-    if (body && body.length) init.body = new Uint8Array(body);
 
-    const upstream = await fetch(upstreamUrl, init);
-    const setCookies = typeof upstream.headers.getSetCookie === 'function' ? upstream.headers.getSetCookie() : [];
-    if (setCookies.length) this.opts.jar.absorbSetCookie(setCookies);
+    const doUpstreamFetch = async (): Promise<Response> => {
+      const init: RequestInit = {
+        method,
+        headers,
+        redirect: 'manual',
+        signal: AbortSignal.timeout(30000),
+      };
+      if (body && body.length) init.body = new Uint8Array(body);
+      try {
+        return await fetch(upstreamUrl, init);
+      } catch (err) {
+        if (method === 'GET' || method === 'HEAD') {
+          await new Promise((r) => setTimeout(r, 120));
+          return fetch(upstreamUrl, {
+            method,
+            headers,
+            redirect: 'manual',
+            signal: AbortSignal.timeout(30000),
+          });
+        }
+        throw err;
+      }
+    };
+
+    let resolveInflight: ((v: CachedResponse) => void) | undefined;
+    let rejectInflight: ((e: unknown) => void) | undefined;
+    if (isCdn && method === 'GET') {
+      const p = new Promise<CachedResponse>((resolve, reject) => {
+        resolveInflight = resolve;
+        rejectInflight = reject;
+      });
+      // 防止没有并发订阅者时产生 unhandledRejection
+      p.catch(() => undefined);
+      this.inflightCdn.set(cacheKey, p);
+    }
+
+    let upstream: Response;
+    let raw: Buffer;
+    try {
+      upstream = await doUpstreamFetch();
+      const setCookies = typeof upstream.headers.getSetCookie === 'function' ? upstream.headers.getSetCookie() : [];
+      if (setCookies.length) this.opts.jar.absorbSetCookie(setCookies);
+      raw = Buffer.from(await upstream.arrayBuffer());
+    } catch (err) {
+      if (cacheKey) this.inflightCdn.delete(cacheKey);
+      rejectInflight?.(err);
+      throw err;
+    }
 
     const contentType = upstream.headers.get('content-type');
-    let raw = Buffer.from(await upstream.arrayBuffer());
 
     if (isCloudflareChallenge(upstream.status, upstream.headers, raw.subarray(0, 4096).toString('utf8'))) {
+      if (cacheKey) this.inflightCdn.delete(cacheKey);
+      rejectInflight?.(new Error('cloudflare challenge'));
       const html = challengePageHtml(
         site,
         `${site.host} 返回了 Cloudflare 人机验证（HTTP ${upstream.status}），代理无法在 IDE 内绕过。`,
@@ -278,10 +336,16 @@ export class LeetCodeProxy {
       this.pendingCookieDeletions = [];
     }
     if (browserCookies.length) browserHeaders['set-cookie'] = browserCookies;
-    if (isCdn && upstream.status === 200 && shouldRewriteText(contentType) && out.length < 4 * 1024 * 1024) {
+    const entry: CachedResponse = { status: upstream.status, headers: browserHeaders, body: out, ts: Date.now() };
+    if (cacheKey) {
+      this.inflightCdn.delete(cacheKey);
+      resolveInflight?.(entry);
+    }
+    if (isCdn && upstream.status === 200 && out.length < 4 * 1024 * 1024) {
       this.cacheCdn(cacheKey, upstream.status, browserHeaders, out);
     }
     this.writeHead(res, upstream.status, browserHeaders);
+    if (res.writableEnded || res.destroyed) return;
     if (method === 'HEAD') {
       res.end();
       return;
@@ -322,16 +386,25 @@ export class LeetCodeProxy {
     headers: Record<string, string | string[]>,
     body: Buffer,
   ): void {
-    if (this.cdnCache.size > 200) {
-      const oldest = [...this.cdnCache.entries()].sort((a, b) => a[1].ts - b[1].ts).slice(0, 50);
-      for (const [k] of oldest) this.cdnCache.delete(k);
-    }
+    const prev = this.cdnCache.get(key);
+    if (prev) this.cdnCacheBytes -= prev.body.length;
     this.cdnCache.set(key, { status, headers, body, ts: Date.now() });
+    this.cdnCacheBytes += body.length;
+
+    if (this.cdnCache.size > 240 || this.cdnCacheBytes > MAX_CDN_CACHE_BYTES) {
+      const sorted = [...this.cdnCache.entries()].sort((a, b) => a[1].ts - b[1].ts);
+      for (const [k, v] of sorted) {
+        if (this.cdnCache.size <= 160 && this.cdnCacheBytes <= MAX_CDN_CACHE_BYTES * 0.75) break;
+        this.cdnCache.delete(k);
+        this.cdnCacheBytes -= v.body.length;
+      }
+    }
   }
 
   // ---------------------------------------------------------------- 工具
 
   private writeHead(res: ServerResponse, status: number, headers: Record<string, string | string[]>): void {
+    if (res.headersSent || res.writableEnded || res.destroyed) return;
     for (const [k, v] of Object.entries(headers)) {
       if (v === undefined) continue;
       try {
@@ -350,9 +423,12 @@ export class LeetCodeProxy {
     body: string,
     extra: Record<string, string> = {},
   ): void {
-    res.statusCode = status;
-    res.setHeader('content-type', contentType);
-    for (const [k, v] of Object.entries(extra)) res.setHeader(k, v);
+    if (res.writableEnded || res.destroyed) return;
+    if (!res.headersSent) {
+      res.statusCode = status;
+      res.setHeader('content-type', contentType);
+      for (const [k, v] of Object.entries(extra)) res.setHeader(k, v);
+    }
     if (status === 204) {
       res.end();
       return;

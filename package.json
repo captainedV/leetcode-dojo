@@ -2,7 +2,7 @@
   "name": "leetcode-local-ide",
   "displayName": "LeetCode Local IDE",
   "description": "在 VS Code / Cursor 中内嵌 LeetCode 网页，用本地 IDE 编写、调试、测试并提交代码。含 AI 补全限制与本地测试脚手架。",
-  "version": "0.2.6",
+  "version": "0.3.1",
   "publisher": "xialc",
   "license": "MIT",
   "engines": {
@@ -141,6 +141,18 @@
         "title": "打开底部面板（测试用例 / 结果）",
         "category": "LeetCode Local",
         "icon": "$(layout-panel)"
+      },
+      {
+        "command": "lcLocal.resetLayout",
+        "title": "重置左右分栏布局（左题面 + 右代码）",
+        "category": "LeetCode Local",
+        "icon": "$(split-horizontal)"
+      },
+      {
+        "command": "lcLocal.quickMenu",
+        "title": "打开快捷控制菜单",
+        "category": "LeetCode Local",
+        "icon": "$(flame)"
       }
     ],
     "keybindings": [
@@ -184,6 +196,11 @@
           "command": "lcLocal.openPanel",
           "when": "lcLocal.active",
           "group": "navigation@4"
+        },
+        {
+          "command": "lcLocal.resetLayout",
+          "when": "lcLocal.active",
+          "group": "navigation@5"
         }
       ],
       "commandPalette": [
@@ -278,7 +295,24 @@
         "lcLocal.editor.hideSiteEditor": {
           "type": "boolean",
           "default": true,
-          "description": "用覆盖层替换网页里的代码编辑器（关闭后网页编辑器照常可见，代码仍会同步）"
+          "description": "在题目页自动隐藏网页右侧代码区，仅保留题面铺满左栏（关闭后显示完整网页）"
+        },
+        "lcLocal.layout.autoSplit": {
+          "type": "boolean",
+          "default": true,
+          "description": "进入 LeetCode 模式及打开题目时，自动将工作区划分为左右两栏（左栏题面网页，右栏本地代码）"
+        },
+        "lcLocal.layout.leftRatio": {
+          "type": "number",
+          "default": 0.45,
+          "minimum": 0.25,
+          "maximum": 0.7,
+          "description": "自动左右分栏时左栏（题面网页）所占宽度比例（默认 0.45）"
+        },
+        "lcLocal.layout.lockLeftGroup": {
+          "type": "boolean",
+          "default": true,
+          "description": "锁定左栏编辑器组，使文件树点击、搜索文件与断点调试跳转始终在右栏打开，避免遮挡左栏题面"
         },
         "lcLocal.python.path": {
           "type": "string",

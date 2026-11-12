@@ -1,11 +1,11 @@
 /**
  * Webview shell：左侧栏的容器页面。
- *  - 顶部一条原生感的工具栏（语言切换 / 本地运行 / 官方运行 / 提交 / 提示）
- *  - 下面是加载本地代理的 iframe（真实 LeetCode 页面）
+ *  - 顶部一条紧凑优雅的原生感工具栏（导航 / 题目与难度徽章 / 语言 / 运行提交 / 布局控制 / 更多菜单）
+ *  - 细流光进度条 + 底部是加载本地代理的 iframe（真实 LeetCode 页面）
  *  - 在 iframe（页面源）与扩展宿主之间转发消息
  */
 import type { BridgeMessage, HostMessage } from '../bridge/protocol.js';
-import type { HostToShell, LangOption, ResultItem, ShellAction, ShellToHost } from './protocol.js';
+import type { HostToShell, LangOption, ShellAction, ShellToHost } from './protocol.js';
 
 interface VsCodeApi {
   postMessage(msg: unknown): void;
@@ -19,74 +19,114 @@ const vscode = acquireVsCodeApi();
 
 const frame = document.getElementById('frame') as HTMLIFrameElement;
 const titleEl = document.getElementById('title') as HTMLElement;
+const diffBadgeEl = document.getElementById('diffBadge') as HTMLElement;
 const subEl = document.getElementById('subtitle') as HTMLElement;
 const langSel = document.getElementById('lang') as HTMLSelectElement;
 const statusEl = document.getElementById('status') as HTMLElement;
+const statusTextEl = document.getElementById('statusText') as HTMLElement;
+const loaderEl = document.getElementById('loader') as HTMLElement;
 const toastEl = document.getElementById('toast') as HTMLElement;
+const toastIconEl = document.getElementById('toastIcon') as HTMLElement;
+const toastTextEl = document.getElementById('toastText') as HTMLElement;
+const toastCloseEl = document.getElementById('toastClose') as HTMLElement;
 const bar = document.getElementById('bar') as HTMLElement;
-const resultsEl = document.getElementById('results') as HTMLElement;
+const focusBtn = document.getElementById('focusBtn') as HTMLElement | null;
+const focusLabel = document.getElementById('focusLabel') as HTMLElement | null;
+const moreBtn = document.getElementById('moreBtn') as HTMLElement | null;
+const moreMenu = document.getElementById('moreMenu') as HTMLElement | null;
 
-let ready = false;
 let pendingToBridge: HostMessage[] = [];
+let toastTimer: number | undefined;
+let focusing = true;
 
 function send(msg: ShellToHost): void {
   vscode.postMessage(msg);
 }
 
+const TOAST_ICONS: Record<'info' | 'warn' | 'error', string> = {
+  info: '✦',
+  warn: '⚠',
+  error: '✕',
+};
+
 function toast(text: string, level: 'info' | 'warn' | 'error' = 'info'): void {
-  toastEl.textContent = text;
+  if (toastTimer !== undefined) window.clearTimeout(toastTimer);
+  toastIconEl.textContent = TOAST_ICONS[level];
+  toastTextEl.textContent = text;
   toastEl.dataset.level = level;
   toastEl.classList.add('show');
-  window.setTimeout(() => toastEl.classList.remove('show'), 4200);
+  toastTimer = window.setTimeout(() => {
+    toastEl.classList.remove('show');
+  }, 4600);
+}
+
+toastCloseEl?.addEventListener('click', () => {
+  if (toastTimer !== undefined) window.clearTimeout(toastTimer);
+  toastEl.classList.remove('show');
+});
+
+function setBusy(busy: boolean): void {
+  loaderEl?.classList.toggle('is-busy', busy);
 }
 
 function setStatus(text: string, level: 'ok' | 'warn' | 'error' | 'busy' = 'ok'): void {
-  statusEl.textContent = text;
+  if (statusTextEl) statusTextEl.textContent = text;
   statusEl.dataset.level = level;
+  setBusy(level === 'busy');
 }
 
-const KIND_ICON: Record<ResultItem['kind'], string> = {
-  pass: '✅',
-  fail: '❌',
-  unknown: '➖',
-  info: 'ℹ️',
-};
-
-/** 在左栏直接渲染运行/提交结果，避免用户「找不到输出面板」 */
-function renderResults(msg: Extract<HostToShell, { type: 'results' }>): void {
-  const rows = msg.items ?? [];
-  resultsEl.hidden = false;
-  resultsEl.dataset.ok = String(msg.ok);
-  // 失败时默认展开，成功时折叠（点一下可展开）
-  resultsEl.dataset.open = msg.ok ? 'false' : 'true';
-  resultsEl.innerHTML = `
-    <div class="head" data-role="toggle" title="点击展开/收起">
-      <span class="badge">${msg.ok ? '✅' : '❌'} ${escapeHtml(msg.title)}</span>
-      <span class="meta">${escapeHtml(msg.detail ?? (msg.source === 'local' ? '本地测试' : 'LeetCode 官方判题'))}</span>
-      <span class="spacer"></span>
-      <span class="chev">${msg.ok ? '展开' : '收起'}</span>
-    </div>
-    ${msg.detail ? `<div class="detail">${escapeHtml(msg.detail)}</div>` : ''}
-    <div class="body">${rows
-      .map((r) => `<div class="row ${r.kind}"><span class="k">${KIND_ICON[r.kind] ?? '•'}</span><span>${escapeHtml(r.text)}</span></div>`)
-      .join('')}</div>`;
-  const head = resultsEl.querySelector('[data-role="toggle"]');
-  head?.addEventListener('click', () => {
-    const open = resultsEl.dataset.open === 'true';
-    resultsEl.dataset.open = String(!open);
-    const chev = resultsEl.querySelector('.chev');
-    if (chev) chev.textContent = open ? '展开' : '收起';
-  });
-  maybeFitStage();
+function syncFocusState(value?: boolean): void {
+  if (typeof value === 'boolean') focusing = value;
+  focusBtn?.classList.toggle('is-active', focusing);
+  if (focusLabel) {
+    focusLabel.textContent = focusing ? '专注题面' : '完整网页';
+  }
+  if (focusBtn) {
+    focusBtn.title = focusing
+      ? '当前仅展示题面（已隐藏网页编辑器）· 点击切换为显示完整网页'
+      : '当前显示完整网页（含线上编辑器）· 点击切换为专注题面';
+  }
 }
 
-function escapeHtml(text: string): string {
-  return String(text ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c] as string);
+function renderDifficulty(difficulty?: string): void {
+  if (!diffBadgeEl) return;
+  const raw = (difficulty ?? '').trim();
+  if (!raw) {
+    diffBadgeEl.hidden = true;
+    diffBadgeEl.textContent = '';
+    diffBadgeEl.dataset.diff = '';
+    return;
+  }
+  const key = raw.toLowerCase();
+  let label = raw;
+  let norm = 'medium';
+  if (key === 'easy' || raw === '简单') {
+    label = '简单';
+    norm = 'easy';
+  } else if (key === 'medium' || raw === '中等') {
+    label = '中等';
+    norm = 'medium';
+  } else if (key === 'hard' || raw === '困难') {
+    label = '困难';
+    norm = 'hard';
+  }
+  diffBadgeEl.textContent = label;
+  diffBadgeEl.dataset.diff = norm;
+  diffBadgeEl.hidden = false;
 }
 
-function maybeFitStage(): void {
-  // iframe 用 absolute 定位铺满 #stage，结果条会自动挤压 #stage 高度
-  void bar.offsetHeight;
+function formatDisplayTitle(title?: string, frontendId?: string): string {
+  const cleanTitle = (title ?? '').trim() || 'LeetCode';
+  if (frontendId && !cleanTitle.startsWith(`${frontendId}.`)) {
+    return `${frontendId}. ${cleanTitle}`;
+  }
+  return cleanTitle;
+}
+
+function formatShortFile(fileName?: string): string {
+  if (!fileName) return '';
+  const parts = fileName.replace(/\\/g, '/').split('/');
+  return parts[parts.length - 1] || fileName;
 }
 
 function fillLangs(langs: LangOption[], current: string): void {
@@ -94,10 +134,10 @@ function fillLangs(langs: LangOption[], current: string): void {
   for (const l of langs) {
     const opt = document.createElement('option');
     opt.value = l.slug;
-    opt.textContent = l.localHarness ? `${l.label}` : `${l.label}（仅官方判题）`;
+    opt.textContent = l.localHarness ? l.label : `${l.label} · 仅官方`;
     langSel.appendChild(opt);
   }
-  langSel.value = current;
+  if (current) langSel.value = current;
 }
 
 function toBridge(msg: HostMessage): void {
@@ -115,17 +155,41 @@ function flushPending(): void {
   for (const msg of queue) toBridge(msg);
 }
 
+function closeMoreMenu(): void {
+  if (!moreMenu || moreMenu.hidden) return;
+  moreMenu.hidden = true;
+  moreBtn?.setAttribute('aria-expanded', 'false');
+}
+
+moreBtn?.addEventListener('click', (ev) => {
+  ev.stopPropagation();
+  if (!moreMenu) return;
+  const willOpen = moreMenu.hidden;
+  moreMenu.hidden = !willOpen;
+  moreBtn.setAttribute('aria-expanded', String(willOpen));
+});
+
+document.addEventListener('click', (ev) => {
+  if (!moreMenu || moreMenu.hidden) return;
+  const target = ev.target as Node | null;
+  if (target && (moreMenu.contains(target) || moreBtn?.contains(target))) return;
+  closeMoreMenu();
+});
+
 /** 页面里的桥接脚本 → 宿主 */
 window.addEventListener('message', (ev) => {
   const data = ev.data as { lcLocal?: boolean } & Record<string, unknown>;
   if (!data || typeof data !== 'object') return;
   if (ev.source === frame?.contentWindow && data.lcLocal) {
-    send({ type: 'bridge', msg: data as unknown as BridgeMessage });
+    const bMsg = data as unknown as BridgeMessage;
+    if (bMsg.t === 'ready') {
+      setBusy(false);
+    }
+    send({ type: 'bridge', msg: bMsg });
     return;
   }
   // 页面整体 reload（登录后跳转等）
   if (ev.source === frame?.contentWindow) {
-    ready = false;
     setStatus('页面加载中…', 'busy');
   }
 });
@@ -136,22 +200,50 @@ window.addEventListener('message', (ev) => {
   if (!msg || typeof msg !== 'object' || !('type' in msg)) return;
   switch (msg.type) {
     case 'init': {
-      titleEl.textContent = msg.title || 'LeetCode';
-      subEl.textContent = msg.fileName || '';
+      titleEl.textContent = formatDisplayTitle(msg.title, msg.frontendId);
+      renderDifficulty(msg.difficulty);
+      subEl.textContent = formatShortFile(msg.fileName);
+      subEl.title = msg.fileName || '';
       fillLangs(msg.langs, msg.lang);
+      syncFocusState(msg.hideEditor ?? true);
       if (frame.getAttribute('src') !== msg.frameUrl) {
+        setBusy(true);
         frame.setAttribute('src', msg.frameUrl);
       }
-      setStatus(msg.signedIn ? '已登录' : '未登录', msg.signedIn ? 'ok' : 'warn');
+      setStatus(
+        msg.signedIn ? (msg.signedInName ? `${msg.signedInName}` : '已登录') : '未登录',
+        msg.signedIn ? 'ok' : 'warn',
+      );
       bar.dataset.harness = msg.harnessNote ? 'limited' : '';
       break;
     }
     case 'state': {
-      if (msg.title !== undefined) titleEl.textContent = msg.title || 'LeetCode';
-      if (msg.fileName !== undefined) subEl.textContent = msg.fileName;
-      if (msg.lang !== undefined && langSel.value !== msg.lang) langSel.value = msg.lang;
+      if (msg.langs && msg.langs.length) {
+        fillLangs(msg.langs, msg.lang ?? langSel.value);
+      } else if (msg.lang !== undefined && langSel.value !== msg.lang) {
+        langSel.value = msg.lang;
+      }
+      if (msg.title !== undefined) {
+        titleEl.textContent = formatDisplayTitle(msg.title, msg.frontendId);
+      }
+      if (msg.difficulty !== undefined) {
+        renderDifficulty(msg.difficulty);
+      }
+      if (msg.fileName !== undefined) {
+        subEl.textContent = formatShortFile(msg.fileName);
+        subEl.title = msg.fileName;
+      }
+      if (msg.hideEditor !== undefined) {
+        syncFocusState(msg.hideEditor);
+      }
       if (msg.signedIn !== undefined) {
-        setStatus(msg.signedIn ? `已登录${msg.signedInName ? `：${msg.signedInName}` : ''}` : '未登录', msg.signedIn ? 'ok' : 'warn');
+        setStatus(
+          msg.signedIn ? (msg.signedInName ? `${msg.signedInName}` : '已登录') : '未登录',
+          msg.signedIn ? 'ok' : 'warn',
+        );
+      }
+      if (msg.busy !== undefined) {
+        setBusy(msg.busy);
       }
       break;
     }
@@ -160,15 +252,15 @@ window.addEventListener('message', (ev) => {
       break;
     }
     case 'reload': {
-      ready = false;
       pendingToBridge = [];
+      setBusy(true);
       const current = frame.getAttribute('src') ?? '';
       frame.setAttribute('src', 'about:blank');
-      window.setTimeout(() => frame.setAttribute('src', current), 60);
+      window.setTimeout(() => frame.setAttribute('src', current), 50);
       break;
     }
     case 'results': {
-      // 结果现在显示在底部面板（LeetCode 面板），左侧不再挤占题面空间
+      setBusy(false);
       break;
     }
     case 'toast': {
@@ -179,29 +271,30 @@ window.addEventListener('message', (ev) => {
       setStatus(msg.text, msg.level ?? 'ok');
       break;
     }
-    default:
+    default: {
+      const _exhaustive: never = msg;
+      void _exhaustive;
       break;
+    }
   }
 });
 
 frame.addEventListener('load', () => {
-  setStatus('已加载', 'ok');
+  setBusy(false);
+  if (statusEl.dataset.level === 'busy') {
+    setStatus('就绪', 'ok');
+  }
   flushPending();
 });
 
-const focusBtn = document.getElementById('focusBtn');
-let focusing = true;
-function syncFocusLabel(): void {
-  if (focusBtn) focusBtn.textContent = focusing ? '只显示题面' : '显示完整网页';
-}
-syncFocusLabel();
+syncFocusState(true);
 
 for (const btn of Array.from(document.querySelectorAll<HTMLElement>('[data-act]'))) {
   btn.addEventListener('click', () => {
     const action = btn.dataset.act as ShellAction;
+    closeMoreMenu();
     if (action === 'toggleFocus') {
-      focusing = !focusing;
-      syncFocusLabel();
+      syncFocusState(!focusing);
     }
     send({ type: 'action', action });
   });
@@ -211,8 +304,12 @@ langSel.addEventListener('change', () => {
   send({ type: 'lang', lang: langSel.value });
 });
 
-// 让 webview 内的键盘事件不要被 iframe 吃掉：提供一个快捷键透传（Cmd/Ctrl+Alt+Enter → 本地运行）
+// 顶栏与菜单快捷键透传
 window.addEventListener('keydown', (ev) => {
+  if (ev.key === 'Escape') {
+    closeMoreMenu();
+    return;
+  }
   if ((ev.metaKey || ev.ctrlKey) && ev.altKey) {
     if (ev.key === 'Enter') {
       ev.preventDefault();

@@ -67,6 +67,8 @@ const PROBLEMSET_QUERY = `query problemsetQuestionList($categorySlug: String, $l
 }`;
 
 export class LcClient {
+  private questionCache = new Map<string, { question: LcQuestion; ts: number }>();
+
   constructor(private opts: LcClientOptions) {}
 
   get site(): SiteConfig {
@@ -77,7 +79,13 @@ export class LcClient {
     return this.opts.jar;
   }
 
-  private async request(path: string, init: RequestInit = {}): Promise<Response> {
+  clearCache(): void {
+    this.questionCache.clear();
+  }
+
+  private async request(path: string, init: RequestInit = {}, retry?: number): Promise<Response> {
+    const method = (init.method ?? 'GET').toUpperCase();
+    const maxRetry = retry ?? (method === 'GET' || path === this.site.graphql ? 1 : 0);
     const { site, jar } = this.opts;
     const headers: Record<string, string> = {
       'content-type': 'application/json',
@@ -93,12 +101,20 @@ export class LcClient {
     const csrf = jar.csrfToken();
     if (csrf) headers['x-csrftoken'] = csrf;
     const fetchImpl = this.opts.fetchImpl ?? fetch;
-    return fetchImpl(`${site.origin}${path}`, {
-      ...init,
-      headers: { ...headers, ...(init.headers as Record<string, string> | undefined) },
-      redirect: 'manual',
-      signal: AbortSignal.timeout(30000),
-    });
+    try {
+      return await fetchImpl(`${site.origin}${path}`, {
+        ...init,
+        headers: { ...headers, ...(init.headers as Record<string, string> | undefined) },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(30000),
+      });
+    } catch (err) {
+      if (maxRetry > 0) {
+        await delay(150);
+        return this.request(path, init, maxRetry - 1);
+      }
+      throw err;
+    }
   }
 
   async graphql<T>(query: string, variables: Record<string, unknown>, operationName?: string): Promise<T> {
@@ -122,9 +138,17 @@ export class LcClient {
     return obj.data;
   }
 
-  async fetchQuestion(titleSlug: string): Promise<LcQuestion> {
+  async fetchQuestion(titleSlug: string, opts: { forceRefresh?: boolean } = {}): Promise<LcQuestion> {
+    const cacheKey = `${this.site.id}:${titleSlug}`;
+    if (!opts.forceRefresh) {
+      const hit = this.questionCache.get(cacheKey);
+      if (hit && Date.now() - hit.ts < 10 * 60 * 1000) {
+        return hit.question;
+      }
+    }
     const data = await this.graphql<{ question: LcQuestion | null }>(QUESTION_QUERY, { titleSlug }, 'questionData');
     if (!data.question) throw new Error(`题目不存在：${titleSlug}`);
+    this.questionCache.set(cacheKey, { question: data.question, ts: Date.now() });
     return data.question;
   }
 

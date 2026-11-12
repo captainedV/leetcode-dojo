@@ -3,13 +3,15 @@
  * 不依赖 vscode，方便单测与在 CI 中验证。
  */
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { join, resolve as resolvePath } from 'node:path';
 import type { CaseResult, RunResult, TestCase } from '../core/types.js';
 import { HARNESS_DONE_PREFIX, HARNESS_ERROR_PREFIX, HARNESS_RESULT_PREFIX } from '../core/types.js';
 import { compareOutputEx } from '../core/parse.js';
 import type { CmdStep, HarnessArtifact, HarnessInput, LanguageHarness } from './harness/types.js';
+import { CASES_FILE } from './harness/types.js';
 import { getHarness } from './harness/index.js';
 import { checkLangToolchain, resolveExecutable, resolvePython, resolvePython2 } from './toolchain.js';
 
@@ -51,13 +53,37 @@ export async function findExecutable(names: string[]): Promise<string | undefine
   return undefined;
 }
 
+const MAX_STEP_OUTPUT_BYTES = 4 * 1024 * 1024;
+const compileDigestCache = new Map<string, string>();
+
+/** 清空指定目录（或全部）的增量编译缓存（例如调试编译改写二进制后） */
+export function invalidateCompileCache(cwd?: string): void {
+  if (!cwd) {
+    compileDigestCache.clear();
+    return;
+  }
+  for (const key of compileDigestCache.keys()) {
+    if (key.startsWith(`${cwd}::`)) compileDigestCache.delete(key);
+  }
+}
+
+/** 测试辅助：重置增量编译缓存 */
+export function __resetCompileCache(): void {
+  compileDigestCache.clear();
+}
+
 export function runStep(step: CmdStep, cwd: string, opts: ExecOptions = {}): Promise<StepOutput> {
   const timeoutMs = opts.timeoutMs ?? 20000;
   return new Promise((resolve) => {
     const started = Date.now();
+    if (opts.signal?.aborted) {
+      resolve({ step, code: -1, stdout: '', stderr: '[aborted]', timedOut: true, durationMs: 0 });
+      return;
+    }
     let stdout = '';
     let stderr = '';
     let timedOut = false;
+    let outputOverflow = false;
     const child = spawn(step.cmd, step.args, {
       cwd,
       env: { ...process.env, ...(opts.env ?? {}) },
@@ -73,13 +99,24 @@ export function runStep(step: CmdStep, cwd: string, opts: ExecOptions = {}): Pro
     };
     opts.signal?.addEventListener('abort', abortHandler);
     child.stdout.on('data', (d) => {
+      if (outputOverflow) return;
       const s = String(d);
+      if (stdout.length + s.length > MAX_STEP_OUTPUT_BYTES) {
+        outputOverflow = true;
+        stdout += s.slice(0, Math.max(0, MAX_STEP_OUTPUT_BYTES - stdout.length));
+        stderr += '\n[output limit] 标准输出超过 4MB 上限（疑似死循环打印），已自动终止子进程。';
+        child.kill('SIGKILL');
+        child.stdout.destroy();
+        child.stderr.destroy();
+        return;
+      }
       stdout += s;
       opts.onLog?.(s);
     });
     child.stderr.on('data', (d) => {
+      if (stderr.length > MAX_STEP_OUTPUT_BYTES) return;
       const s = String(d);
-      stderr += s;
+      stderr += s.slice(0, Math.max(0, MAX_STEP_OUTPUT_BYTES - stderr.length));
       opts.onLog?.(s);
     });
     child.on('error', (err) => {
@@ -275,10 +312,26 @@ export async function runLocalTestsWith(
   let stdoutAll = '';
   let stderrAll = '';
   for (const step of resolvedSteps) {
+    const isCompile = step.label === 'compile' || step.label === 'build';
+    const cacheSlot = `${cwd}::${step.label}`;
+    let compileDigest: string | undefined;
+
+    if (isCompile) {
+      compileDigest = computeCompileDigest(input, artifact, step);
+      if (
+        compileDigestCache.get(cacheSlot) === compileDigest &&
+        hasExpectedCompileArtifact(step, cwd)
+      ) {
+        opts.onLog?.(`[compile-cache] 代码未变更，跳过重复编译（${input.langSlug}）\n`);
+        continue;
+      }
+    }
+
     const out = await runStep(step, cwd, { ...opts, env: { ...env, ...(opts.env ?? {}) } });
     stdoutAll += out.stdout;
     stderrAll += out.stderr;
     if (out.timedOut) {
+      const cancelled = Boolean(opts.signal?.aborted);
       return {
         ok: false,
         cases: input.testCases.map((c) => ({
@@ -286,18 +339,20 @@ export async function runLocalTestsWith(
           ok: false,
           actual: '',
           expected: c.expected,
-          error: `超时（>${opts.timeoutMs ?? 20000}ms）`,
+          error: cancelled ? '已取消运行' : `超时（>${opts.timeoutMs ?? 20000}ms）`,
         })),
         stdout: stdoutAll,
         stderr: stderrAll,
         durationMs: Date.now() - started,
         langSlug: input.langSlug,
         harnessSource: 'builtin',
-        unsupportedReason: '执行超时：请检查是否有死循环，或调大 lcLocal.run.timeoutMs。',
+        unsupportedReason: cancelled
+          ? '本地运行已取消。'
+          : '执行超时：请检查是否有死循环，或调大 lcLocal.run.timeoutMs。',
       };
     }
-    const isCompile = step.label === 'compile' || step.label === 'build';
     if (isCompile && out.code !== 0) {
+      compileDigestCache.delete(cacheSlot);
       return {
         ok: false,
         cases: [],
@@ -310,6 +365,7 @@ export async function runLocalTestsWith(
       };
     }
     if (out.code === null || out.code === -1) {
+      if (isCompile) compileDigestCache.delete(cacheSlot);
       return {
         ok: false,
         cases: [],
@@ -320,6 +376,9 @@ export async function runLocalTestsWith(
         harnessSource: 'builtin',
         unsupportedReason: `无法执行 \`${step.cmd}\`：${out.stderr.trim().split('\n').slice(-1)[0] ?? '未知错误'}。${harness.installHint}`,
       };
+    }
+    if (isCompile && compileDigest) {
+      compileDigestCache.set(cacheSlot, compileDigest);
     }
   }
 
@@ -340,4 +399,39 @@ export async function runLocalTestsWith(
 /** 判断题目是否已经生成了脚手架（调试命令复用）。 */
 export function harnessExists(genDir: string, entry: string): boolean {
   return existsSync(join(genDir, entry));
+}
+
+function computeCompileDigest(
+  input: Omit<HarnessInput, 'debug'>,
+  artifact: HarnessArtifact,
+  step: CmdStep,
+): string {
+  const hash = createHash('sha256');
+  hash.update(`${input.langSlug}\0${step.cmd}\0${step.args.join('\0')}\0`);
+  hash.update(input.sourceCode ?? '');
+  hash.update('\0');
+  try {
+    if (input.sourceAbsPath && existsSync(input.sourceAbsPath)) {
+      hash.update(readFileSync(input.sourceAbsPath));
+      hash.update('\0');
+    }
+  } catch {
+    /* ignore */
+  }
+  for (const f of artifact.files) {
+    if (f.name === CASES_FILE) continue;
+    hash.update(`${f.name}\0${f.content}\0`);
+  }
+  return hash.digest('hex');
+}
+
+function hasExpectedCompileArtifact(step: CmdStep, cwd: string): boolean {
+  const outIdx = step.args.indexOf('-o');
+  if (outIdx >= 0 && outIdx + 1 < step.args.length) {
+    return existsSync(resolvePath(cwd, step.args[outIdx + 1]));
+  }
+  if (/(^|[\\/])javac(\.exe)?$/i.test(step.cmd)) {
+    return existsSync(join(cwd, 'Main.class'));
+  }
+  return false;
 }

@@ -149,11 +149,18 @@ function sliceOutermostJson(text: string): string {
 
 export class AssistantClient {
   private controller: AbortController | null = null;
+  private cfg: AiConfig;
 
   constructor(
-    private readonly cfg: AiConfig,
+    cfg: AiConfig,
     private readonly log: (msg: string) => void,
-  ) {}
+  ) {
+    this.cfg = cfg;
+  }
+
+  updateConfig(next: AiConfig): void {
+    this.cfg = next;
+  }
 
   get config(): AiConfig {
     return this.cfg;

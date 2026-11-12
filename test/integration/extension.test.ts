@@ -109,10 +109,16 @@ describe('扩展集成（真实网络 + 真实 python3）', () => {
     expect(vscodeMock.completionProviders.length).toBeGreaterThan(0);
   });
 
-  it('进入模式后启动代理并渲染左栏（含 CSP frame-src）', async () => {
+  it('进入模式后启动代理并渲染左栏（含 CSP frame-src 与自动左右分栏）', async () => {
     if (!online) return;
+    // 只创建唯一一个状态栏入口（修复双状态栏按钮问题）
+    expect(vscodeMock.statusBarItems.filter((i) => i.visible)).toHaveLength(1);
     await vscodeMock.commands.executeCommand('lcLocal.enter');
     await waitFor(() => vscodeMock.panels.length > 0, 15000, 'panel created');
+    // 进入模式后依然只有一个状态栏项，且自动拆出了左右两栏
+    expect(vscodeMock.statusBarItems.filter((i) => i.visible)).toHaveLength(1);
+    expect(vscodeMock.executedCommands).toContain('vscode.setEditorLayout');
+    expect(vscodeMock.mockTabGroups.length).toBeGreaterThanOrEqual(2);
     // 模拟 shell.js 启动后发的 ready（面板在 ready 之前会把消息排队）
     vscodeMock.__sendToWebview({ type: 'ready' });
     await waitFor(

@@ -144,6 +144,9 @@ const defaults = new Map<string, unknown>([
   ['lcLocal.aiGuard.enabled', true],
   ['lcLocal.workspace.subdir', 'leetcode'],
   ['lcLocal.editor.hideSiteEditor', true],
+  ['lcLocal.layout.autoSplit', true],
+  ['lcLocal.layout.leftRatio', 0.45],
+  ['lcLocal.layout.lockLeftGroup', true],
 ]);
 
 export function __setConfig(key: string, value: unknown): void {
@@ -264,7 +267,7 @@ export interface MockPanel {
     onDidReceiveMessage(cb: (msg: unknown) => void): Disposable;
   };
   visible: boolean;
-  reveal(): void;
+  reveal(targetCol?: ViewColumn, preserveFocus?: boolean): void;
   onDidDispose(cb: () => void): Disposable;
   dispose(): void;
 }
@@ -347,10 +350,72 @@ export const messages = {
   warningChoiceQueue: [] as Array<string | undefined>,
 };
 
+export interface MockTab {
+  label: string;
+  isDirty: boolean;
+  input?: unknown;
+}
+
+export interface MockTabGroup {
+  viewColumn: ViewColumn;
+  isActive: boolean;
+  isLocked: boolean;
+  activeTab?: MockTab;
+  tabs: MockTab[];
+}
+
+export const mockTabGroups: MockTabGroup[] = [
+  { viewColumn: ViewColumn.One, isActive: true, isLocked: false, tabs: [] },
+];
+export const editorLayouts: unknown[] = [];
+export const shownDocuments: Array<{ fsPath: string; viewColumn?: ViewColumn }> = [];
+export const statusBarItems: Array<{ text: string; tooltip: string; command?: string; visible: boolean }> = [];
+
+export function __resetTabGroups(groups?: MockTabGroup[]): void {
+  mockTabGroups.length = 0;
+  if (groups?.length) {
+    mockTabGroups.push(...groups);
+  } else {
+    mockTabGroups.push({ viewColumn: ViewColumn.One, isActive: true, isLocked: false, tabs: [] });
+  }
+  editorLayouts.length = 0;
+  shownDocuments.length = 0;
+}
+
+function ensureMockGroup(col: ViewColumn): MockTabGroup {
+  let g = mockTabGroups.find((x) => x.viewColumn === col);
+  if (!g) {
+    g = { viewColumn: col, isActive: false, isLocked: false, tabs: [] };
+    mockTabGroups.push(g);
+  }
+  return g;
+}
+
 export const __outputChannels: Array<{ name: string; lines: string[] }> = [];
 
 export const window = {
   activeTextEditor: undefined,
+  tabGroups: {
+    get all() {
+      return mockTabGroups;
+    },
+    get activeTabGroup() {
+      return mockTabGroups.find((g) => g.isActive) ?? mockTabGroups[0];
+    },
+    async close(tab: MockTab | MockTab[]): Promise<boolean> {
+      const list = Array.isArray(tab) ? tab : [tab];
+      for (const t of list) {
+        for (const g of mockTabGroups) {
+          const idx = g.tabs.indexOf(t);
+          if (idx >= 0) {
+            g.tabs.splice(idx, 1);
+            if (g.activeTab === t) g.activeTab = g.tabs[g.tabs.length - 1];
+          }
+        }
+      }
+      return true;
+    },
+  },
   createOutputChannel(name: string) {
     const lines: string[] = [];
     __outputChannels.push({ name, lines });
@@ -372,19 +437,40 @@ export const window = {
     };
   },
   createStatusBarItem(_align?: StatusBarAlignment, _priority?: number) {
-    return {
+    const item = {
       text: '',
       tooltip: '',
       command: undefined as string | undefined,
-      show() {},
-      hide() {},
-      dispose() {},
+      visible: false,
+      show() {
+        item.visible = true;
+      },
+      hide() {
+        item.visible = false;
+      },
+      dispose() {
+        const i = statusBarItems.indexOf(item);
+        if (i >= 0) statusBarItems.splice(i, 1);
+      },
     };
+    statusBarItems.push(item);
+    return item;
   },
-  createWebviewPanel(_viewType: string, title: string) {
+  createWebviewPanel(viewType: string, title: string, showOpts?: ViewColumn | { viewColumn?: ViewColumn; preserveFocus?: boolean }) {
+    const col = typeof showOpts === 'number' ? showOpts : (showOpts?.viewColumn ?? ViewColumn.One);
+    const preserveFocus = typeof showOpts === 'object' ? Boolean(showOpts?.preserveFocus) : false;
+    const g = ensureMockGroup(col);
+    const webTab: MockTab = { label: title, isDirty: false, input: { viewType } };
+    g.tabs.push(webTab);
+    g.activeTab = webTab;
+    if (!preserveFocus) {
+      for (const x of mockTabGroups) x.isActive = x === g;
+    }
+
     const listeners: Array<(msg: unknown) => void> = [];
     const disposeListeners: Array<() => void> = [];
-    const panel: MockPanel = {
+    const panel: MockPanel & { title?: string; iconPath?: unknown } = {
+      title,
       webview: {
         html: '',
         options: {},
@@ -404,21 +490,43 @@ export const window = {
         },
       },
       visible: true,
-      reveal() {},
+      reveal(targetCol?: ViewColumn, pFocus?: boolean) {
+        const target = ensureMockGroup(targetCol ?? col);
+        if (!pFocus) {
+          for (const x of mockTabGroups) x.isActive = x === target;
+        }
+      },
       onDidDispose(cb: () => void) {
         disposeListeners.push(cb);
         return new Disposable();
       },
       dispose() {
         panel.visible = false;
+        void window.tabGroups.close(webTab);
         for (const cb of disposeListeners) cb();
       },
     };
     panels.push(panel);
     return panel;
   },
-  async showTextDocument(doc: MockDocument, _opts?: unknown) {
-    return { document: doc, viewColumn: ViewColumn.Two };
+  async showTextDocument(doc: MockDocument, opts?: { viewColumn?: ViewColumn; preserveFocus?: boolean; preview?: boolean }) {
+    const requestedCol = opts?.viewColumn ?? ViewColumn.One;
+    // 模拟真实 VS Code 的 revealIfOpen：如果某栏已经有该 URI 的标签页，会直接复用那一栏
+    const existingGroup = mockTabGroups.find((g) =>
+      g.tabs.some((t) => (t.input as { uri?: Uri } | undefined)?.uri?.fsPath === doc.uri.fsPath),
+    );
+    const actualGroup = existingGroup ?? ensureMockGroup(requestedCol);
+    let tab = actualGroup.tabs.find((t) => (t.input as { uri?: Uri } | undefined)?.uri?.fsPath === doc.uri.fsPath);
+    if (!tab) {
+      tab = { label: nodePath.basename(doc.uri.fsPath), isDirty: doc.isDirty, input: { uri: doc.uri } };
+      actualGroup.tabs.push(tab);
+    }
+    actualGroup.activeTab = tab;
+    if (!opts?.preserveFocus) {
+      for (const x of mockTabGroups) x.isActive = x === actualGroup;
+    }
+    shownDocuments.push({ fsPath: doc.uri.fsPath, viewColumn: actualGroup.viewColumn });
+    return { document: doc, viewColumn: actualGroup.viewColumn };
   },
   async showInformationMessage(msg: string, ..._rest: unknown[]) {
     messages.info.push(msg);
@@ -473,6 +581,28 @@ export const commands = {
     if (commands.failCommands.has(id)) throw new Error(`command '${id}' not found`);
     if (id === 'setContext') {
       contextKeys.set(String(args[0]), args[1]);
+      return undefined;
+    }
+    if (id === 'vscode.setEditorLayout') {
+      const layout = args[0] as { groups?: unknown[] } | undefined;
+      editorLayouts.push(layout);
+      const count = layout?.groups?.length ?? 2;
+      for (let i = 1; i <= count; i++) ensureMockGroup(i as ViewColumn);
+      return undefined;
+    }
+    if (id === 'workbench.action.lockEditorGroup') {
+      const active = window.tabGroups.activeTabGroup;
+      if (active) active.isLocked = true;
+      return undefined;
+    }
+    if (id === 'workbench.action.unlockEditorGroup') {
+      const active = window.tabGroups.activeTabGroup;
+      if (active) active.isLocked = false;
+      return undefined;
+    }
+    if (id === 'workbench.action.focusFirstEditorGroup') {
+      const g1 = ensureMockGroup(ViewColumn.One);
+      for (const x of mockTabGroups) x.isActive = x === g1;
       return undefined;
     }
     const cb = registeredCommands.get(id);

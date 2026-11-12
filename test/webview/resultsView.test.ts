@@ -153,4 +153,47 @@ describe('底部面板 reveal（为什么用户看不到面板）', () => {
     const { view } = makeViewInstance();
     expect(view.isResolved).toBe(true);
   });
+
+  it('saveCases 消息会把用户在面板编辑的用例归一化后交给宿主持久化', () => {
+    const saved: unknown[] = [];
+    const view = new ResultsView({
+      extensionUri: vscodeMock.Uri.file('/tmp/ext'),
+      onAction: () => undefined,
+      onLang: () => undefined,
+      onSaveCases: (cases) => saved.push(cases),
+    });
+    const { view: fakeView, send } = makeView();
+    view.resolveWebviewView(fakeView as never);
+    send({ type: 'ready' });
+    send({
+      type: 'saveCases',
+      cases: [
+        { args: ['[1,2,3]', '4'], expected: '[0,2]', source: 'custom' },
+        { args: ['[5,5]', '10'], expected: '   ', source: 'custom' },
+      ],
+    });
+    expect(saved).toHaveLength(1);
+    expect(saved[0]).toEqual([
+      { index: 0, args: ['[1,2,3]', '4'], expected: '[0,2]', source: 'custom' },
+      { index: 1, args: ['[5,5]', '10'], expected: null, source: 'custom' },
+    ]);
+  });
+
+  it('setRunning 会自动切到结果标签并广播运行进度状态', () => {
+    const view = new ResultsView({
+      extensionUri: vscodeMock.Uri.file('/tmp/ext'),
+      onAction: () => undefined,
+      onLang: () => undefined,
+    });
+    const { view: fakeView, posted, send } = makeView();
+    view.resolveWebviewView(fakeView as never);
+    send({ type: 'ready' });
+    posted.length = 0;
+    view.setRunning({ active: true, label: '正在本地运行…', cancellable: true });
+    expect(posted).toContainEqual({
+      type: 'running',
+      running: { active: true, label: '正在本地运行…', cancellable: true },
+      tab: 'results',
+    });
+  });
 });

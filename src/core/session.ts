@@ -1,9 +1,9 @@
 /**
- * 会话编排：进入/退出练习模式，把「内嵌网页 ↔ 本地文件 ↔ 本地测试 ↔ 官方判题」串起来。
+ * 会话编排：进入/退出练习模式，把「左右自动分栏 ↔ 内嵌网页 ↔ 本地文件 ↔ 本地测试 ↔ 官方判题」串起来。
  */
 import * as vscode from 'vscode';
 import { existsSync, readFileSync } from 'node:fs';
-import { readFile, unlink } from 'node:fs/promises';
+import { unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CookieJar } from '../proxy/cookies.js';
 import { LeetCodeProxy } from '../proxy/server.js';
@@ -11,21 +11,21 @@ import { getSite, type SiteConfig } from './site.js';
 import { LcClient } from './lcapi.js';
 import { ProblemStore, type ProblemFiles } from './workspace.js';
 import { SessionStore } from './cookieStore.js';
+import { WorkspaceLayoutManager, isWebviewTab } from './layout.js';
 import { SitePanel } from '../webview/panel.js';
 import { ResultsView } from '../webview/resultsView.js';
-import type { ResultsViewAction, ResultsViewItem } from '../webview/resultsView.js';
-import type { HostToShell, LangOption, ShellAction, ShellToHost } from '../webview/protocol.js';
+import type { ResultsCaseDetail, ResultsViewAction, ResultsViewItem } from '../webview/resultsView.js';
+import type { LangOption, ShellAction, ShellToHost } from '../webview/protocol.js';
 import type { BridgeMessage, HostMessage, JudgeKind } from '../bridge/protocol.js';
 import { formatJudgeResult } from '../bridge/judge.js';
-import { runLocalTests, runStep } from '../runner/execute.js';
-import { checkLangToolchain, resolveExecutable, resolvePython, resolvePython2 } from '../runner/toolchain.js';
+import { invalidateCompileCache, materialize, runLocalTests, runStep } from '../runner/execute.js';
+import { checkLangToolchain, resolvePython, resolvePython2 } from '../runner/toolchain.js';
 import { debugPlanFor, describeBlocked, orderDebugCandidates, toDebugCompileSteps } from '../runner/debug.js';
-import { materialize } from '../runner/execute.js';
 import { getHarness } from '../runner/harness/index.js';
 import { classifyType } from '../runner/harness/types.js';
-import { allLangs, getLang, normalizeLangSlug } from './langs.js';
+import { allLangs, normalizeLangSlug } from './langs.js';
 import type { LcMetaData, LcQuestion, RunResult, TestCase } from './types.js';
-import { parseCustomInput, parseMetaData } from './parse.js';
+import { parseCustomInput, parseMetaData, splitExampleTestcases } from './parse.js';
 import { hintForError } from './diagnose.js';
 import { AssistantClient, readAiConfig } from '../ai/provider.js';
 import { requestHint, requestLineCompletion } from '../ai/hints.js';
@@ -53,6 +53,7 @@ export class LcSession implements vscode.Disposable {
   private readonly client: LcClient;
   private readonly ai: AssistantClient;
   private readonly guard: AiGuard;
+  private readonly layout: WorkspaceLayoutManager;
   private proxy?: LeetCodeProxy;
   private panel?: SitePanel;
   private active?: ActiveProblem;
@@ -64,11 +65,16 @@ export class LcSession implements vscode.Disposable {
   private persistTimer?: ReturnType<typeof setTimeout>;
   private username?: string;
   private lastReportedSignedIn?: boolean;
+  /** 供自检探针读取的最近日志 */
+  private readonly logRing: string[] = [];
   private lastPush = { lang: '', code: '' };
+  private openProblemSeq = 0;
+  private runAbortController?: AbortController;
 
   constructor(private readonly deps: SessionDeps) {
     const site = currentSite();
     this.sessionStore = new SessionStore(deps.context, (l) => this.log(l));
+    this.layout = new WorkspaceLayoutManager((l) => this.log(l));
     // cookie 一变就（防抖）持久化：登录态、csrftoken 都不会因为重开 IDE 而丢
     this.jar = new CookieJar(site, (reason) => this.onCookiesChanged(reason));
     this.client = new LcClient({ site, jar: this.jar, log: (l) => this.log(l) });
@@ -79,11 +85,29 @@ export class LcSession implements vscode.Disposable {
       extensionUri: deps.context.extensionUri,
       onAction: (action, payload) => void this.onResultsViewAction(action, payload),
       onLang: (lang) => void this.switchLanguage(lang, { silent: true }),
+      onSaveCases: (cases) => void this.saveEditedCases(cases),
       log: (line) => this.log(line),
     });
-    this.statusBar.command = 'lcLocal.enter';
-    this.statusBar.text = '$(browser) LeetCode';
-    this.statusBar.tooltip = '进入 LeetCode 练习模式（左侧网页 + 右侧本地 IDE）';
+    this.syncStatusBar();
+    this.statusBar.show();
+  }
+
+  private syncStatusBar(): void {
+    if (!this.panel) {
+      this.statusBar.command = 'lcLocal.enter';
+      this.statusBar.text = '$(code) LeetCode';
+      this.statusBar.tooltip = '进入 LeetCode 练习模式（自动划分左栏网页题面 + 右栏本地 IDE）';
+      return;
+    }
+    this.statusBar.command = 'lcLocal.quickMenu';
+    if (this.active) {
+      const id = this.active.question.questionFrontendId ?? this.active.question.questionId;
+      this.statusBar.text = `$(flame) LC ${id}. ${this.active.question.title} · ${this.active.langSlug}`;
+      this.statusBar.tooltip = `LeetCode 练习中：${id}. ${this.active.question.title}（点击打开快捷控制菜单）`;
+    } else {
+      this.statusBar.text = '$(flame) LeetCode 模式';
+      this.statusBar.tooltip = '点击打开 LeetCode 快捷控制菜单（运行 / 提交 / 分栏归位 / 退出）';
+    }
   }
 
   // ------------------------------------------------------------------ 生命周期
@@ -94,7 +118,11 @@ export class LcSession implements vscode.Disposable {
 
   async enter(): Promise<void> {
     if (this.panel) {
-      this.panel.reveal();
+      await this.layout.ensureTwoColumnLayout(false);
+      this.panel.reveal(false);
+      if (this.active) {
+        await this.layout.openDocumentInRightColumn(this.active.files.source, { preserveFocus: true, preview: false });
+      }
       return;
     }
     const cfg = vscode.workspace.getConfiguration('lcLocal');
@@ -129,44 +157,115 @@ export class LcSession implements vscode.Disposable {
       void vscode.window.showWarningMessage(site.note ?? `${site.host} 无法内嵌，已退化为 API 模式。`);
     }
 
+    // 1) 自动拆出左右两栏，并把左栏已有的普通代码文件平滑迁往右栏
+    await this.layout.ensureTwoColumnLayout(false);
+    await this.layout.evacuateLeftTextTabs();
+
+    // 2) 在左栏（ViewColumn.One）创建并聚焦 LeetCode 面板，随后锁定左栏防覆盖
     this.panel = SitePanel.create({
       extensionUri: this.deps.context.extensionUri,
       proxyOrigin: proxy.origin(),
       onMessage: (msg) => void this.onShellMessage(msg),
       onDispose: () => void this.onPanelDisposed(),
     });
+    // 确保面板确实落在第一栏（若用户原本已有分栏，reveal 会把面板挪过去）
+    this.panel.reveal(true);
+    // 锁左栏命令实测不生效，真正的保障是下面的「布局守护」
+    await this.layout.lockLeftEditorGroup();
+    this.layout.startGuarding((tab) => isWebviewTab(tab, 'lcLocal.site'));
+
+    // 3) 若存在上次打开题目的本地缓存文件，立即在右栏秒开，无需等待网页加载完成
+    const lastSlug = this.sessionStore.getLastSlug();
+    if (lastSlug) {
+      const cached = await this.deps.store.findCachedProblemSource(lastSlug);
+      if (cached) {
+        await this.layout.openDocumentInRightColumn(cached.source, { preserveFocus: true, preview: false });
+      }
+    }
+
     await vscode.commands.executeCommand('setContext', 'lcLocal.active', true);
-    this.statusBar.show();
-    this.statusBar.text = '$(browser) LeetCode 模式';
+    this.syncStatusBar();
     this.registerListeners();
-    await vscode.commands.executeCommand('setContext', 'lcLocal.active', true);
     this.guard.enable(this.deps.store.baseDir()).then((r) => {
       if (r.changed.length) this.log(`[guard] 已压制 ${r.changed.join(', ')}`);
     });
     void this.pushPanelInit();
-    // 底部面板需要主动打开一次（贡献出来的容器不会自动出现）
+    // 底部面板主动展开（不抢焦点）
     void this.ensureResultsPanelVisible();
     void this.refreshSession();
   }
 
   async exit(): Promise<void> {
+    this.runAbortController?.abort();
+    this.runAbortController = undefined;
     if (this.persistTimer) {
       clearTimeout(this.persistTimer);
       this.persistTimer = undefined;
     }
     await this.persistCookies('exit');
     await this.guard.disable();
+    this.layout.stopGuarding();
+    await this.layout.unlockLeftEditorGroupIfNeeded();
     this.panel?.dispose();
     this.panel = undefined;
     await this.proxy?.stop();
     this.proxy = undefined;
     this.active = undefined;
-    this.statusBar.text = '$(browser) LeetCode';
+    this.syncStatusBar();
     await vscode.commands.executeCommand('setContext', 'lcLocal.active', false);
     this.disposeListeners();
   }
 
+  /** 一键重置左右分栏与三区工作台布局 */
+  async resetLayout(): Promise<void> {
+    if (!this.panel) {
+      await this.enter();
+      return;
+    }
+    await this.layout.ensureTwoColumnLayout(true);
+    await this.layout.evacuateLeftTextTabs();
+    this.panel.reveal(false);
+    await this.layout.lockLeftEditorGroup();
+    if (this.active) {
+      await this.layout.openDocumentInRightColumn(this.active.files.source, { preserveFocus: false, preview: false });
+    }
+    await this.ensureResultsPanelVisible();
+    this.panel.post({ type: 'toast', text: '已重置为标准布局（左栏题面 + 右栏代码 + 底部测试台）', level: 'info' });
+  }
+
+  /** 状态栏快捷控制菜单 */
+  async showQuickMenu(): Promise<void> {
+    if (!this.panel) {
+      await this.enter();
+      return;
+    }
+    const activeLabel = this.active
+      ? `${this.active.question.questionFrontendId ?? ''}. ${this.active.question.title} (${this.active.langSlug})`
+      : '当前尚未进入题目';
+    const items: Array<vscode.QuickPickItem & { cmd: string }> = [
+      { label: '$(play) 本地运行所有测试用例', description: '⌘/Ctrl+Alt+Enter', detail: activeLabel, cmd: 'lcLocal.runLocal' },
+      { label: '$(bug) 启动本地断点调试', description: '单步/断点查看变量', cmd: 'lcLocal.debugLocal' },
+      { label: '$(cloud-upload) 提交代码到 LeetCode', description: '⌘/Ctrl+Alt+S', cmd: 'lcLocal.submit' },
+      { label: '$(beaker) 官方判题试运行', description: '调用 LeetCode 云端运行示例', cmd: 'lcLocal.runOnLeetCode' },
+      { label: '$(split-horizontal) 重置左右分栏布局', description: '左栏题面 + 右栏代码 + 底部面板', cmd: 'lcLocal.resetLayout' },
+      { label: '$(layout-panel) 打开底部测试工作台', description: '编辑测试用例 / 查看运行对比', cmd: 'lcLocal.openPanel' },
+      { label: '$(search) 搜索/跳转题目…', description: '输入 slug 或粘贴题目链接', cmd: 'lcLocal.openProblem' },
+      { label: '$(symbol-enum) 切换编程语言', description: this.active?.langSlug ?? '', cmd: 'lcLocal.switchLanguage' },
+      { label: '$(lightbulb) 渐进式 AI 思路提示', description: '⌘/Ctrl+Alt+H（不直接给代码）', cmd: 'lcLocal.aiHint' },
+      { label: '$(pulse) 查看环境与工具链诊断', description: '检查登录态 / 编译器 / 调试器', cmd: 'lcLocal.showDiagnostics' },
+      { label: '$(close) 退出 LeetCode 练习模式', description: '关闭内嵌代理并还原编辑器设置', cmd: 'lcLocal.exit' },
+    ];
+    const picked = await vscode.window.showQuickPick(items, {
+      title: 'LeetCode Local IDE 快捷面板',
+      placeHolder: activeLabel,
+    });
+    if (picked) {
+      await vscode.commands.executeCommand(picked.cmd);
+    }
+  }
+
   dispose(): void {
+    this.runAbortController?.abort();
     this.disposeListeners();
     void this.proxy?.stop();
     this.statusBar.dispose();
@@ -189,7 +288,10 @@ export class LcSession implements vscode.Disposable {
         if (editor && this.isPracticeFile(editor.document)) void this.syncActiveDocument(editor.document);
       }),
       vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration('lcLocal')) void this.pushPanelState();
+        if (e.affectsConfiguration('lcLocal')) {
+          this.ai.updateConfig(readAiConfig());
+          void this.pushPanelState();
+        }
       }),
     );
   }
@@ -209,14 +311,19 @@ export class LcSession implements vscode.Disposable {
     const signedIn = this.jar.isSignedIn();
     const lastSlug = this.sessionStore.getLastSlug();
     const landing = lastSlug ? `/problems/${lastSlug}/` : '/problemset/';
+    const hideEditor = vscode.workspace.getConfiguration('lcLocal').get<boolean>('editor.hideSiteEditor', true);
     this.panel.post({
       type: 'init',
       frameUrl: this.proxy.url(landing),
       title: this.active?.question.title ?? 'LeetCode 题库',
+      frontendId: this.active?.question.questionFrontendId,
+      difficulty: this.active?.question.difficulty,
       lang: this.active?.langSlug ?? defaultLang(),
       langs,
       signedIn,
+      signedInName: this.username,
       fileName: this.active ? relativeName(this.active) : '',
+      hideEditor,
     });
     this.pushCodeToBridge();
   }
@@ -227,7 +334,6 @@ export class LcSession implements vscode.Disposable {
       const visible = await this.resultsView.reveal({ focusView: false });
       if (!visible) {
         this.log('[panel] 底部面板仍未显示，可手动：查看 → 面板 → LeetCode，或执行命令「LeetCode Local: 打开底部面板」');
-        // 有些发行版/布局下扩展面板容器不会自动展开，给一个可见的入口，别让用户去猜
         void vscode.window
           .showInformationMessage(
             '测试用例 / 结果面板没能自动打开。可以手动打开它（查看 → 面板），或把结果显示在输出面板里。',
@@ -239,14 +345,18 @@ export class LcSession implements vscode.Disposable {
             if (pick === '用输出面板') this.deps.output.show(true);
           });
       }
-      // 面板打开后把焦点还给左栏网页，避免打断用户
-      this.panel?.reveal(true);
+      // 面板打开后保持焦点不打断用户当前操作
+      if (this.active) {
+        await this.layout.openDocumentInRightColumn(this.active.files.source, { preserveFocus: true, preview: false });
+      } else {
+        this.panel?.reveal(true);
+      }
     } catch (err) {
       this.log(`[panel] reveal 失败：${(err as Error).message}`);
     }
   }
 
-  /** 把当前题目/语言/用例同步到底部面板 */
+  /** 把当前题目/语言/参数签名/用例同步到底部面板 */
   private async pushResultsViewState(): Promise<void> {
     const active = this.active;
     if (!active) {
@@ -271,23 +381,50 @@ export class LcSession implements vscode.Disposable {
     this.resultsView.setState({
       title: `${active.question.questionFrontendId ?? active.question.questionId}. ${active.question.title}`,
       slug: active.question.titleSlug,
+      difficulty: active.question.difficulty,
       langSlug: active.langSlug,
       langs: this.langOptions(),
       fileName: relativeName(active),
+      params: active.meta?.params.map((p) => ({ name: p.name, type: p.type })) ?? [],
       cases,
       note: support && support.ok === false ? support.reason : undefined,
     });
   }
 
+  private async saveEditedCases(cases: TestCase[]): Promise<void> {
+    const active = this.active;
+    if (!active) return;
+    try {
+      await this.deps.store.writeCases(active.files, cases);
+      this.log(`[cases] 已保存 ${cases.length} 个测试用例到 cases.json`);
+      void this.ensureHarnessQuietly();
+    } catch (err) {
+      this.log(`[cases] 保存失败：${(err as Error).message}`);
+    }
+  }
+
   private async pushPanelState(): Promise<void> {
     if (!this.panel) return;
+    const hideEditor = vscode.workspace.getConfiguration('lcLocal').get<boolean>('editor.hideSiteEditor', true);
     this.panel.post({
       type: 'state',
       lang: this.active?.langSlug,
-      title: this.active?.question.title,
+      langs: this.langOptions(),
+      title: this.active?.question.title ?? 'LeetCode 题库',
+      frontendId: this.active?.question.questionFrontendId,
+      difficulty: this.active?.question.difficulty,
       fileName: this.active ? relativeName(this.active) : '',
       signedIn: this.jar.isSignedIn(),
+      signedInName: this.username,
+      hideEditor,
     });
+    if (this.active) {
+      const id = this.active.question.questionFrontendId ?? this.active.question.questionId;
+      this.panel.setTitle(`LC ${id}. ${this.active.question.title}`);
+    } else {
+      this.panel.setTitle('LeetCode');
+    }
+    this.syncStatusBar();
   }
 
   private langOptions(): LangOption[] {
@@ -307,16 +444,23 @@ export class LcSession implements vscode.Disposable {
   }
 
   private async onShellMessage(msg: ShellToHost): Promise<void> {
-    if (msg.type === 'bridge') {
-      await this.onBridgeMessage(msg.msg);
-      return;
-    }
-    if (msg.type === 'lang') {
-      await this.switchLanguage(msg.lang, { silent: true });
-      return;
-    }
-    if (msg.type === 'action') {
-      await this.handleAction(msg.action);
+    switch (msg.type) {
+      case 'ready':
+        break;
+      case 'bridge':
+        await this.onBridgeMessage(msg.msg);
+        break;
+      case 'lang':
+        await this.switchLanguage(msg.lang, { silent: true });
+        break;
+      case 'action':
+        await this.handleAction(msg.action);
+        break;
+      default: {
+        const _exhaustive: never = msg;
+        void _exhaustive;
+        break;
+      }
     }
   }
 
@@ -356,6 +500,12 @@ export class LcSession implements vscode.Disposable {
         await this.ensureResultsPanelVisible();
         await this.resultsView.reveal({ focusView: true });
         break;
+      case 'resetLayout':
+        await this.resetLayout();
+        break;
+      case 'exitMode':
+        await this.exit();
+        break;
       case 'navBack':
         this.panel?.post({ type: 'bridge', msg: { t: 'history', action: 'back' } });
         break;
@@ -369,8 +519,13 @@ export class LcSession implements vscode.Disposable {
         const cfg = vscode.workspace.getConfiguration('lcLocal');
         const next = !cfg.get<boolean>('editor.hideSiteEditor', true);
         await cfg.update('editor.hideSiteEditor', next, vscode.ConfigurationTarget.Global);
-        this.pushCodeToBridge();
-        this.panel?.post({ type: 'toast', text: next ? '已切换为「只显示题面」' : '已显示完整网页（含线上 IDE）', level: 'info' });
+        this.panel?.post({ type: 'bridge', msg: { t: 'hideEditor', value: next } });
+        this.panel?.post({ type: 'state', hideEditor: next });
+        this.panel?.post({
+          type: 'toast',
+          text: next ? '已切换为「专注题面」模式' : '已切换为「显示完整网页」（含线上编辑器）',
+          level: 'info',
+        });
         break;
       }
       case 'settings':
@@ -382,6 +537,11 @@ export class LcSession implements vscode.Disposable {
       case 'login':
         await this.refreshSession(true);
         break;
+      default: {
+        const _exhaustive: never = action;
+        void _exhaustive;
+        break;
+      }
     }
   }
 
@@ -414,6 +574,7 @@ export class LcSession implements vscode.Disposable {
       }
       case 'judgeStarted': {
         this.panel?.post({ type: 'status', text: '判题中…', level: 'busy' });
+        this.resultsView.setRunning({ active: true, label: 'LeetCode 官方判题中…', cancellable: false });
         break;
       }
       case 'judgeResult': {
@@ -421,6 +582,7 @@ export class LcSession implements vscode.Disposable {
         break;
       }
       case 'judgeError': {
+        this.resultsView.setRunning({ active: false });
         this.log(`[bridge] ${msg.kind} 失败：${msg.message}`);
         break;
       }
@@ -429,7 +591,6 @@ export class LcSession implements vscode.Disposable {
         break;
       }
       case 'openExternal': {
-        // 站点里指向站外（或需要新窗口）的链接：交给系统浏览器
         try {
           const uri = vscode.Uri.parse(msg.url);
           if (uri.scheme === 'https' || uri.scheme === 'http') {
@@ -443,10 +604,17 @@ export class LcSession implements vscode.Disposable {
       case 'action': {
         if (msg.action === 'focusLocal') await this.focusLocalEditor();
         else if (msg.action === 'aiHint') await vscode.commands.executeCommand('lcLocal.aiHint');
+        else if (msg.action === 'runLocal') await this.runLocal();
+        else if (msg.action === 'submit') await this.submitToLeetCode();
         break;
       }
       case 'log': {
         if (msg.level !== 'debug') this.log(`[bridge/${msg.level}] ${msg.message}`);
+        break;
+      }
+      default: {
+        const _exhaustive: never = msg;
+        void _exhaustive;
         break;
       }
     }
@@ -460,6 +628,9 @@ export class LcSession implements vscode.Disposable {
     switch (action) {
       case 'runLocal':
         await this.runLocal();
+        break;
+      case 'cancelRun':
+        this.runAbortController?.abort();
         break;
       case 'runOnLeetCode':
         await this.runOnLeetCode();
@@ -479,8 +650,7 @@ export class LcSession implements vscode.Disposable {
       case 'openCases': {
         const active = this.active;
         if (!active) return;
-        const doc = await vscode.workspace.openTextDocument(active.files.cases);
-        await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Two, preview: true });
+        await this.layout.openDocumentInRightColumn(active.files.cases, { preserveFocus: false, preview: true });
         break;
       }
       case 'reloadSnippet':
@@ -495,14 +665,24 @@ export class LcSession implements vscode.Disposable {
       case 'openPanel':
         await this.resultsView.reveal({ focusView: true });
         break;
+      case 'resetLayout':
+        await this.resetLayout();
+        break;
+      default: {
+        const _exhaustive: never = action;
+        void _exhaustive;
+        break;
+      }
     }
   }
 
   private async onPanelDisposed(): Promise<void> {
+    this.runAbortController?.abort();
     this.panel = undefined;
+    await this.layout.unlockLeftEditorGroupIfNeeded();
     await this.proxy?.stop();
     this.proxy = undefined;
-    this.statusBar.text = '$(browser) LeetCode';
+    this.syncStatusBar();
     await vscode.commands.executeCommand('setContext', 'lcLocal.active', false);
     await this.guard.disable();
     this.disposeListeners();
@@ -546,7 +726,6 @@ export class LcSession implements vscode.Disposable {
     const open = vscode.workspace.textDocuments.find((d) => d.uri.fsPath === active.files.source.fsPath);
     if (open) return open.getText();
     try {
-      // 同步读取（文件由我们管理，体积很小）
       return readFileSync(active.files.source.fsPath, 'utf8');
     } catch {
       return '';
@@ -563,13 +742,17 @@ export class LcSession implements vscode.Disposable {
         this.active.files = await this.deps.store.files(this.active.question, lang);
         await this.deps.store.updateMeta(this.active.files.meta, { langSlug: lang });
         void this.pushPanelState();
+        void this.pushResultsViewState();
       }
     }
     this.schedulePush();
   }
 
   private inferLangFromDocument(doc: vscode.TextDocument): string | undefined {
-    const snippets = this.active?.question.codeSnippets ?? [];
+    if (!this.active) return undefined;
+    // 只认当前激活题目目录下的代码文件
+    if (!doc.uri.fsPath.startsWith(this.active.files.dir.fsPath)) return undefined;
+    const snippets = this.active.question.codeSnippets ?? [];
     const fileName = doc.uri.path.split('/').pop() ?? '';
     const exact = snippets.find((s) => this.deps.store.sourceFileName(normalizeLangSlug(s.langSlug)) === fileName);
     if (exact) return normalizeLangSlug(exact.langSlug);
@@ -580,43 +763,70 @@ export class LcSession implements vscode.Disposable {
 
   async openProblem(slug: string, opts: { fromPage?: boolean } = {}): Promise<void> {
     if (this.active?.slug === slug) {
+      await this.layout.openDocumentInRightColumn(this.active.files.source, {
+        preserveFocus: !opts.fromPage,
+        preview: false,
+      });
       this.pushCodeToBridge();
       return;
     }
-    const site = currentSite();
+
+    const seq = ++this.openProblemSeq;
+    // 若是命令行直接跳题，让左栏网页同步导航到该题
+    if (!opts.fromPage && this.panel && this.proxy) {
+      this.panel.post({
+        type: 'init',
+        frameUrl: this.proxy.url(`/problems/${slug}/`),
+        title: slug,
+        lang: defaultLang(),
+        langs: this.langOptions(),
+        signedIn: this.jar.isSignedIn(),
+        signedInName: this.username,
+        fileName: '',
+        hideEditor: vscode.workspace.getConfiguration('lcLocal').get<boolean>('editor.hideSiteEditor', true),
+      });
+    }
+
     this.panel?.post({ type: 'status', text: '加载题目…', level: 'busy' });
     let question: LcQuestion;
     try {
       question = await this.client.fetchQuestion(slug);
     } catch (err) {
+      if (seq !== this.openProblemSeq) return;
       const msg = (err as Error).message;
       this.log(`[problem] 拉取失败：${msg}`);
+      this.panel?.post({ type: 'status', text: '拉取失败', level: 'error' });
       this.panel?.post({ type: 'toast', text: `拉取题目失败：${msg}`, level: 'error' });
       return;
     }
-    if (question.isPaidOnly) {
-      this.panel?.post({ type: 'toast', text: '这是会员题，可能无法获取完整题面。', level: 'warn' });
+    // 用户在等待期间又点进了另一道题：丢弃过期的响应，彻底杜绝乱序覆盖
+    if (seq !== this.openProblemSeq) return;
+
+    if (question.isPaidOnly && !question.content) {
+      this.panel?.post({ type: 'toast', text: '这是会员专属题，需登录已开通会员的账号才能拉取完整模板与题面。', level: 'warn' });
     }
-    const langSlug = this.pickInitialLang(question);
+    const langSlug = await this.pickInitialLang(question);
     const { files, created } = await this.deps.store.ensureProblem(question, langSlug);
     const meta = parseMetaData(question.metaData);
     this.active = { slug, question, meta, files, langSlug };
     this.log(`[problem] ${slug} → ${files.dir.fsPath}（${langSlug}，${created ? '新建' : '已存在'}）`);
 
-    const doc = await vscode.workspace.openTextDocument(files.source);
-    await vscode.window.showTextDocument(doc, {
-      viewColumn: vscode.ViewColumn.Two,
-      preserveFocus: !!opts.fromPage ? false : true,
+    // 强制在右栏打开本地代码文件（自动分栏 + 清理左栏可能残留的同名标签）
+    await this.layout.openDocumentInRightColumn(files.source, {
+      preserveFocus: opts.fromPage ? false : true,
       preview: false,
     });
     await this.deps.store.updateMeta(files.meta, { langSlug });
     void this.sessionStore.setLastSlug(slug);
     await this.pushPanelState();
-    this.panel?.post({ type: 'status', text: site.id, level: 'ok' });
+    this.panel?.post({
+      type: 'status',
+      text: this.jar.isSignedIn() ? (this.username || '已登录') : '未登录',
+      level: this.jar.isSignedIn() ? 'ok' : 'warn',
+    });
     this.pushCodeToBridge();
     await this.pushResultsViewState();
     void this.ensureResultsPanelVisible();
-    this.statusBar.tooltip = `${question.title}（${langSlug}）`;
     // 预热脚手架（失败不影响主流程）
     void this.ensureHarnessQuietly();
 
@@ -625,18 +835,21 @@ export class LcSession implements vscode.Disposable {
     if (!support.ok) {
       this.panel?.post({
         type: 'toast',
-        text: `本地测试不可用：${support.reason}\n仍可用「官方运行 / 提交」。`,
+        text: `本地测试暂不可用：${support.reason}\n仍可正常使用「官方运行 / 提交」。`,
         level: 'warn',
       });
     }
   }
 
-  private pickInitialLang(question: LcQuestion): string {
-    const prev = this.active;
-    void prev;
-    const cfgLang = vscode.workspace.getConfiguration('lcLocal').get<string>('run.defaultLang', '');
+  private async pickInitialLang(question: LcQuestion): Promise<string> {
     const available = (question.codeSnippets ?? []).map((s) => normalizeLangSlug(s.langSlug));
-    const preferred = [cfgLang, defaultLang(), 'python3'].map((l) => normalizeLangSlug(l)).filter(Boolean);
+    // 优先沿用这道题之前保存过的语言选择
+    const existingMeta = await this.deps.store.readMeta(vscode.Uri.joinPath(this.deps.store.problemDir(question), 'meta.json'));
+    const savedLang = existingMeta?.langSlug ? normalizeLangSlug(existingMeta.langSlug) : '';
+    const cfgLang = vscode.workspace.getConfiguration('lcLocal').get<string>('run.defaultLang', '');
+    const preferred = [savedLang, this.active?.langSlug ?? '', cfgLang, defaultLang(), 'python3']
+      .map((l) => normalizeLangSlug(l))
+      .filter(Boolean);
     for (const p of preferred) if (available.includes(p)) return p;
     return available[0] ?? 'python3';
   }
@@ -654,11 +867,11 @@ export class LcSession implements vscode.Disposable {
       const options = this.langOptions().map((l) => ({
         label: l.label,
         description: l.slug,
-        detail: l.localHarness ? '支持本地运行/调试' : '仅支持官方判题',
+        detail: l.localHarness ? '支持本地运行/断点调试' : '仅支持官方判题',
         slug: l.slug,
       }));
       const picked = await vscode.window.showQuickPick(options, {
-        title: '切换语言（会同步本地文件与提交语言）',
+        title: '切换语言（同步切换右侧本地代码文件与提交语言）',
         placeHolder: `当前：${active.langSlug}`,
       });
       if (!picked) return;
@@ -674,8 +887,7 @@ export class LcSession implements vscode.Disposable {
     active.langSlug = target;
     active.files = files;
     await this.deps.store.updateMeta(files.meta, { langSlug: target });
-    const doc = await vscode.workspace.openTextDocument(files.source);
-    await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Two, preview: false, preserveFocus: true });
+    await this.layout.openDocumentInRightColumn(files.source, { preserveFocus: true, preview: false });
     this.pushCodeToBridge();
     await this.pushPanelState();
     await this.pushResultsViewState();
@@ -700,7 +912,7 @@ export class LcSession implements vscode.Disposable {
     await this.switchLanguage(target, { silent: true });
     this.panel?.post({
       type: 'toast',
-      text: `检测到你在网页上切换到了 ${target}，本地文件已跟着切换；请重新点击运行/提交。`,
+      text: `检测到你在网页上切换到了 ${target}，右侧本地文件已自动同步切换；请重新点击运行/提交。`,
       level: 'warn',
     });
   }
@@ -751,14 +963,24 @@ export class LcSession implements vscode.Disposable {
       else if (pick === '在 LeetCode 上运行') await this.runOnLeetCode();
       return;
     }
+
+    // 取消前一次尚未跑完的本地运行
+    this.runAbortController?.abort();
+    const controller = new AbortController();
+    this.runAbortController = controller;
+
     await this.saveActiveDocument();
     const cases = await this.deps.store.readCases(active.files, active.question);
     this.log(`[run] 本地测试 ${active.langSlug}，${cases.length} 个用例`);
     this.panel?.post({ type: 'status', text: '本地运行中…', level: 'busy' });
+    this.resultsView.setRunning({ active: true, label: `正在本地运行 ${cases.length} 个用例（${active.langSlug}）…`, cancellable: true });
+    void this.resultsView.reveal({ focusView: false });
+
     const result = await vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title: 'LeetCode 本地运行', cancellable: false },
-      () =>
-        runLocalTests(
+      { location: vscode.ProgressLocation.Notification, title: 'LeetCode 本地运行', cancellable: true },
+      (_progress, token) => {
+        token.onCancellationRequested(() => controller.abort());
+        return runLocalTests(
           {
             langSlug: active.langSlug,
             meta: active.meta!,
@@ -772,15 +994,20 @@ export class LcSession implements vscode.Disposable {
           {
             timeoutMs: vscode.workspace.getConfiguration('lcLocal').get<number>('run.timeoutMs', 20000),
             pythonPath: vscode.workspace.getConfiguration('lcLocal').get<string>('python.path', '') || undefined,
+            signal: controller.signal,
             onLog: (line) => this.log(line.trimEnd()),
           },
-        ),
+        );
+      },
     );
-    this.renderLocalResult(result);
+    if (this.runAbortController === controller) {
+      this.runAbortController = undefined;
+    }
+    this.renderLocalResult(result, cases);
     await this.pushResultsViewState();
   }
 
-  private renderLocalResult(result: RunResult): void {
+  private renderLocalResult(result: RunResult, inputCases: TestCase[]): void {
     const passed = result.cases.filter((c) => c.ok === true).length;
     const failed = result.cases.filter((c) => c.ok === false).length;
     const unknown = result.cases.filter((c) => c.ok === null).length;
@@ -789,49 +1016,72 @@ export class LcSession implements vscode.Disposable {
     if (result.unsupportedReason) {
       this.log(`⚠️ ${result.unsupportedReason}`);
       if (result.stderr?.trim()) this.log(result.stderr.trim());
+      const isCompileErr = /编译失败/.test(result.unsupportedReason);
       this.resultsView.setResults({
         source: 'local',
         ok: false,
-        title: '本地测试未能执行',
+        title: isCompileErr ? '本地编译失败' : '本地测试未能执行',
         detail: result.unsupportedReason,
+        durationMs: result.durationMs,
+        compileError: isCompileErr ? result.stderr?.trim() : undefined,
         items: [{ kind: 'info', text: result.unsupportedReason }],
       });
-      void this.resultsView.reveal();
-      this.panel?.post({ type: 'status', text: '本地测试不可用', level: 'warn' });
-      this.deps.output.show(true);
-      void vscode.window
-        .showErrorMessage(`本地测试未能执行：${firstLine(result.unsupportedReason)}`, '查看输出', '重建脚手架', '在 LeetCode 上运行')
-        .then((pick) => {
-          if (pick === '查看输出') this.deps.output.show(true);
-          if (pick === '重建脚手架') void this.regenerateHarness();
-          if (pick === '在 LeetCode 上运行') void this.runOnLeetCode();
-        });
+      void this.resultsView.reveal({ focusView: false });
+      this.panel?.post({ type: 'status', text: isCompileErr ? '编译失败' : '本地不可用', level: 'warn' });
+      if (result.unsupportedReason !== '本地运行已取消。') {
+        this.deps.output.show(true);
+        void vscode.window
+          .showErrorMessage(`本地测试未能执行：${firstLine(result.unsupportedReason)}`, '查看输出', '重建脚手架', '在 LeetCode 上运行')
+          .then((pick) => {
+            if (pick === '查看输出') this.deps.output.show(true);
+            if (pick === '重建脚手架') void this.regenerateHarness();
+            if (pick === '在 LeetCode 上运行') void this.runOnLeetCode();
+          });
+      }
       return;
     }
 
-    const items: Array<{ kind: 'pass' | 'fail' | 'unknown' | 'info'; text: string }> = [];
+    const caseMap = new Map(inputCases.map((c) => [c.index, c]));
+    const items: ResultsViewItem[] = [];
+    const caseDetails: ResultsCaseDetail[] = [];
+
     for (const c of result.cases) {
       const kind: 'pass' | 'fail' | 'unknown' = c.ok === true ? 'pass' : c.ok === false ? 'fail' : 'unknown';
       const mark = kind === 'pass' ? '✅' : kind === 'fail' ? '❌' : '➖';
       const note = c.meta?.note as string | undefined;
+      const logs = (c.meta?.logs as string | undefined) ?? '';
       let text = `用例 ${c.index + 1}：实际 ${c.actual || '<空>'}${c.expected ? ` ｜ 期望 ${c.expected}` : ''}${note ? ` ｜ ${note}` : ''}`;
       this.log(`${mark} ${text}${c.durationMs !== undefined ? `（${c.durationMs}ms）` : ''}`);
+
+      let errHint: string | undefined;
       if (c.error) {
         const errMsg = c.error.split('\n').slice(0, 6).join('\n');
         this.log(`    错误：\n${errMsg}`);
         const hint = hintForError(c.error);
+        errHint = hint?.hint;
         text += ` ｜ 错误：${firstLine(c.error)}`;
         if (hint) {
           this.log(`    💡 ${hint.hint}`);
           items.push({ kind: 'info', text: `💡 ${hint.hint}` });
         }
       }
-      const logs = (c.meta?.logs as string | undefined) ?? '';
       if (logs.trim()) {
         this.log(`    输出：${logs.trim().split('\n').slice(0, 10).join('\n')}`);
         text += ` ｜ 你的输出：${firstLine(logs.trim())}`;
       }
       items.push({ kind, text });
+      caseDetails.push({
+        index: c.index,
+        ok: c.ok,
+        args: caseMap.get(c.index)?.args ?? [],
+        actual: c.actual,
+        expected: c.expected,
+        durationMs: c.durationMs,
+        logs: logs || undefined,
+        error: c.error,
+        hint: errHint,
+        note,
+      });
     }
     if (result.stderr?.trim() && result.cases.length === 0) {
       this.log(result.stderr.trim());
@@ -842,7 +1092,7 @@ export class LcSession implements vscode.Disposable {
     const title = total ? `本地测试 ${passed}/${total} 通过` : '本地测试未产生结果';
     const firstFail = result.cases.find((c) => c.ok === false);
     const detailParts: string[] = [];
-    if (unknown) detailParts.push(`${unknown} 个用例没有期望输出（可在 cases.json 里补 expected）`);
+    if (unknown) detailParts.push(`${unknown} 个用例没有期望输出（可在底部「测试用例」标签页补填）`);
     if (!result.ok && firstFail) {
       detailParts.push(
         `首个失败：用例 ${firstFail.index + 1} 实际 ${firstFail.actual || '<空>'} / 期望 ${firstFail.expected ?? '（无）'}`,
@@ -856,9 +1106,11 @@ export class LcSession implements vscode.Disposable {
       ok: result.ok,
       title,
       detail: detailParts.join('；'),
-      items: items as ResultsViewItem[],
+      durationMs: result.durationMs,
+      caseDetails,
+      items,
     });
-    void this.resultsView.reveal();
+    void this.resultsView.reveal({ focusView: false });
     this.panel?.post({
       type: 'status',
       text: result.ok ? '本地全部通过' : failed ? `本地 ${passed}/${total}` : '本地完成',
@@ -867,14 +1119,13 @@ export class LcSession implements vscode.Disposable {
 
     if (result.ok) {
       void vscode.window
-        .showInformationMessage(`本地测试全部通过（${passed}/${total}）`, '打开面板', '在 LeetCode 上运行', '提交')
+        .showInformationMessage(`本地测试全部通过（${passed}/${total}，${result.durationMs}ms）`, '打开面板', '在 LeetCode 上运行', '提交')
         .then((pick) => {
           if (pick === '打开面板') void this.openResultsPanel();
           if (pick === '在 LeetCode 上运行') void this.runOnLeetCode();
           if (pick === '提交') void this.submitToLeetCode();
         });
     } else {
-      // 关键：失败时自动把输出面板带出来（之前只提示「详情见输出面板」，用户找不到）
       this.deps.output.show(true);
       void vscode.window
         .showWarningMessage(
@@ -928,7 +1179,6 @@ export class LcSession implements vscode.Disposable {
       const hit = cases.find((c) => c.index === picked.value);
       return hit ? [hit] : cases;
     }
-    // 自定义输入
     const paramNames = active.meta?.params.map((p) => p.name) ?? [];
     const text = await vscode.window.showInputBox({
       title: '自定义调试输入',
@@ -949,8 +1199,6 @@ export class LcSession implements vscode.Disposable {
 
   /**
    * 本地调试。
-   * @param caseIndex 指定要调试的用例序号（底部面板的「调试」按钮会传）；不传则弹选择：
-   *        全部用例 / 某个用例 / 自定义输入
    */
   async debugLocal(caseIndex?: number): Promise<void> {
     const active = await this.requireActive();
@@ -964,7 +1212,6 @@ export class LcSession implements vscode.Disposable {
       return;
     }
 
-    // 先确认工具链（GUI 编辑器 PATH 不全时，报错要能指导用户）
     const tc = await checkLangToolchain(lang);
     if (tc.missing.length) {
       this.log(`[debug] 缺少工具链：${tc.missing.join(', ')}\n${tc.hints.join('\n')}`);
@@ -973,6 +1220,9 @@ export class LcSession implements vscode.Disposable {
     }
 
     await this.saveActiveDocument();
+    // 调试前确保右栏代码处于可见状态，断点停止时即停在右栏而非遮盖左栏题面
+    await this.layout.openDocumentInRightColumn(active.files.source, { preserveFocus: false, preview: false });
+
     const allCases = await this.deps.store.readCases(active.files, active.question);
     const chosen = await this.pickDebugCases(allCases, active, caseIndex);
     if (!chosen) return;
@@ -989,7 +1239,8 @@ export class LcSession implements vscode.Disposable {
       debug: true,
     });
     await materialize(artifact, active.files.localDir.fsPath);
-    // 调试需要调试信息：把编译步骤换成 -g -O0（否则断点绑不上）
+    // 调试编译使用 -g -O0 覆写同名二进制后，失效常规 -O2 编译缓存
+    invalidateCompileCache(active.files.localDir.fsPath);
     const debugSteps = toDebugCompileSteps(lang, artifact.steps);
     this.log(`[debug] 入口=${artifact.debugEntry}，编译步骤=${debugSteps
       .filter((s) => s.label === 'compile' || s.label === 'build')
@@ -1012,7 +1263,6 @@ export class LcSession implements vscode.Disposable {
     const runStepDef = artifact.steps.find((s) => s.label === 'run');
     const binary =
       runStepDef && runStepDef.cmd.startsWith('./') ? join(active.files.localDir.fsPath, runStepDef.cmd.slice(2)) : undefined;
-    // 调试器必须用「和本地运行同一个」解释器；python 优先 3.10+（PEP 604 注解）
     const cfgPython = vscode.workspace.getConfiguration('lcLocal').get<string>('python.path', '') || undefined;
     const singleCase = chosen.length === 1;
     const pythonPath = lang.startsWith('python')
@@ -1026,7 +1276,6 @@ export class LcSession implements vscode.Disposable {
       sourceAbs: active.files.source.fsPath,
       binary,
       pythonPath,
-      // 只调试一个用例时，让异常照常抛出来，调试器会停在出错那一行
       extraArgs: singleCase ? ['--raise-on-error'] : [],
     });
     const isInstalled = (id: string): boolean => {
@@ -1081,8 +1330,13 @@ export class LcSession implements vscode.Disposable {
     if (!active) return;
     await this.saveActiveDocument();
     const code = this.activeDocumentCode();
-    const dataInput = this.exampleInput(active.question);
+    const cases = await this.deps.store.readCases(active.files, active.question);
+    const dataInput = cases.length
+      ? cases.map((c) => c.args.join('\n')).join('\n')
+      : this.exampleInput(active.question);
     this.panel?.post({ type: 'status', text: '官方判题中…', level: 'busy' });
+    this.resultsView.setRunning({ active: true, label: '正在请求 LeetCode 官方判题机试运行…', cancellable: false });
+    void this.resultsView.reveal({ focusView: false });
     this.log('[judge] 通过 REST 接口请求官方「运行」…');
     try {
       const { submissionId } = await this.client.run(
@@ -1096,6 +1350,7 @@ export class LcSession implements vscode.Disposable {
       const result = await this.client.pollResult(submissionId, { timeoutMs: 90000 });
       this.renderJudgeResult('run', result);
     } catch (err) {
+      this.resultsView.setRunning({ active: false });
       const msg = (err as Error).message;
       this.log(`[judge] 运行失败：${msg}`);
       this.panel?.post({ type: 'status', text: '官方运行失败', level: 'error' });
@@ -1117,6 +1372,8 @@ export class LcSession implements vscode.Disposable {
     await this.saveActiveDocument();
     const code = this.activeDocumentCode();
     this.panel?.post({ type: 'status', text: '提交中…', level: 'busy' });
+    this.resultsView.setRunning({ active: true, label: '正在提交到 LeetCode 官方评测机…', cancellable: false });
+    void this.resultsView.reveal({ focusView: false });
     this.log('[judge] 通过 REST 接口提交…');
     try {
       const { submissionId } = await this.client.submit(
@@ -1129,6 +1386,7 @@ export class LcSession implements vscode.Disposable {
       const result = await this.client.pollResult(submissionId, { timeoutMs: 120000 });
       this.renderJudgeResult('submit', result);
     } catch (err) {
+      this.resultsView.setRunning({ active: false });
       const msg = (err as Error).message;
       this.log(`[judge] 提交失败：${msg}`);
       this.panel?.post({ type: 'status', text: '提交失败', level: 'error' });
@@ -1139,18 +1397,58 @@ export class LcSession implements vscode.Disposable {
   private renderJudgeResult(kind: JudgeKind, result: Parameters<typeof formatJudgeResult>[1]): void {
     const lines = formatJudgeResult(kind, result);
     for (const line of lines) this.log(line);
-    const accepted = /accepted|通过/i.test(result.statusMsg ?? '');
+    const baseAccepted = /accepted|通过/i.test(result.statusMsg ?? '');
+    const compareOk = result.compareResult ? !result.compareResult.includes('0') : true;
+    const accepted = kind === 'run' ? baseAccepted && compareOk && result.runSuccess !== false : baseAccepted;
+
+    const caseDetails: ResultsCaseDetail[] = [];
+    if (kind === 'run' && result.codeAnswer?.length) {
+      const paramLen = this.active?.meta?.params.length ?? 1;
+      const fallbackGroups = this.active
+        ? splitExampleTestcases(this.active.question.exampleTestcases, paramLen)
+        : [];
+      for (let i = 0; i < result.codeAnswer.length; i++) {
+        const cmpChar = result.compareResult?.[i];
+        const ok = cmpChar === '1' ? true : cmpChar === '0' ? false : null;
+        caseDetails.push({
+          index: i,
+          ok,
+          args: fallbackGroups[i] ?? [],
+          actual: result.codeAnswer[i] ?? '',
+          expected: result.expectedCodeAnswer?.[i] ?? null,
+          logs: result.stdOutput?.[i] || undefined,
+        });
+      }
+    } else if (kind === 'submit' && !accepted && (result.lastTestcase || result.codeOutput?.length || result.expectedCodeAnswer?.length)) {
+      const paramLen = this.active?.meta?.params.length ?? 1;
+      const lastArgs = result.lastTestcase ? splitExampleTestcases(result.lastTestcase, paramLen)[0] ?? [result.lastTestcase] : [];
+      caseDetails.push({
+        index: 0,
+        ok: false,
+        args: lastArgs,
+        actual: result.codeOutput?.join('\n') ?? result.codeAnswer?.join('\n') ?? '',
+        expected: result.expectedCodeAnswer?.join('\n') ?? null,
+        logs: result.stdOutput?.filter(Boolean).join('\n') || undefined,
+      });
+    }
+
     this.resultsView.setResults({
       source: 'judge',
       ok: accepted,
-      title: `${kind === 'submit' ? '提交' : '运行'}：${result.statusMsg ?? result.state ?? '已返回'}`,
+      title: `${kind === 'submit' ? '提交' : '官方运行'}：${result.statusMsg ?? result.state ?? '已返回'}`,
       detail:
         typeof result.totalCorrect === 'number' && typeof result.totalTestcases === 'number'
           ? `通过用例 ${result.totalCorrect}/${result.totalTestcases}`
           : undefined,
+      durationMs: result.elapsedTime,
+      runtimePercentile: result.runtimePercentile,
+      memoryPercentile: result.memoryPercentile,
+      compileError: result.fullCompileError ?? result.compileError,
+      runtimeError: result.fullRuntimeError ?? result.runtimeError,
+      caseDetails: caseDetails.length ? caseDetails : undefined,
       items: lines.slice(1).map((text) => ({ kind: accepted ? ('pass' as const) : ('info' as const), text })),
     });
-    void this.resultsView.reveal();
+    void this.resultsView.reveal({ focusView: false });
     this.panel?.post({
       type: 'status',
       text: result.statusMsg ?? (accepted ? '通过' : '已判题'),
@@ -1190,19 +1488,19 @@ export class LcSession implements vscode.Disposable {
     );
     if (confirm !== '覆盖') return;
     await this.deps.store.writeFile(active.files.source, snippet);
-    const doc = await vscode.workspace.openTextDocument(active.files.source);
-    await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Two, preview: false });
+    await this.layout.openDocumentInRightColumn(active.files.source, { preserveFocus: false, preview: false });
     this.pushCodeToBridge();
   }
 
   async regenerateHarness(): Promise<void> {
     const active = await this.requireActive();
     if (!active) return;
-    // 从题面重新生成 cases.json，再重建脚手架
-    const cases = await this.deps.store.readCases(active.files, active.question);
+    const { buildTestCases } = await import('./parse.js');
+    const cases = buildTestCases(active.question);
     await this.deps.store.writeCases(active.files, cases);
     await this.ensureHarnessQuietly();
-    this.panel?.post({ type: 'toast', text: `已重建测试脚手架（${cases.length} 个用例）`, level: 'info' });
+    await this.pushResultsViewState();
+    this.panel?.post({ type: 'toast', text: `已从题面重置用例并重建测试脚手架（${cases.length} 个用例）`, level: 'info' });
     this.log(`[harness] 重建完成：${active.files.localDir.fsPath}`);
   }
 
@@ -1290,14 +1588,15 @@ export class LcSession implements vscode.Disposable {
     try {
       const hint = await vscode.window.withProgress(
         { location: vscode.ProgressLocation.Notification, title: '正在请求提示…' },
-        () => requestHint(this.ai, {
-          langSlug: active.langSlug,
-          title: active.question.title,
-          contentMd: active.question.content,
-          code: this.activeDocumentCode(),
-          focusWord: words,
-          level,
-        }),
+        () =>
+          requestHint(this.ai, {
+            langSlug: active.langSlug,
+            title: active.question.title,
+            contentMd: active.question.content,
+            code: this.activeDocumentCode(),
+            focusWord: words,
+            level,
+          }),
       );
       void prompt;
       this.log(`──── 提示（${level}）────\n${hint}`);
@@ -1329,8 +1628,7 @@ export class LcSession implements vscode.Disposable {
   async focusLocalEditor(): Promise<void> {
     const active = this.active;
     if (!active) return;
-    const doc = await vscode.workspace.openTextDocument(active.files.source);
-    await vscode.window.showTextDocument(doc, { viewColumn: vscode.ViewColumn.Two, preview: false });
+    await this.layout.openDocumentInRightColumn(active.files.source, { preserveFocus: false, preview: false });
   }
 
   /** cookie 变化：防抖持久化；会话 cookie 变化时顺带确认一次登录状态 */
@@ -1341,7 +1639,6 @@ export class LcSession implements vscode.Disposable {
       void this.persistCookies(reason);
     }, 600);
     if (reason === 'session-cookie') {
-      // 登录/登出都由这一支触发，避免用户手动点「刷新登录状态」
       setTimeout(() => void this.refreshSession(false), 400);
     }
   }
@@ -1356,7 +1653,7 @@ export class LcSession implements vscode.Disposable {
         if (!interactive) {
           this.panel?.post({
             type: 'toast',
-            text: `已登录 LeetCode${this.username ? `：${this.username}` : ''}（登录态已保存，下次打开无需重登）`,
+            text: `已登录 LeetCode${this.username ? `：${this.username}` : ''}（登录态已安全保存，下次打开无需重登）`,
             level: 'info',
           });
         }
@@ -1385,6 +1682,7 @@ export class LcSession implements vscode.Disposable {
     const names = this.jar.summary().map((c) => c.name);
     this.proxy?.scheduleBrowserCookieClear(names);
     this.jar.clear();
+    this.client.clearCache();
     await this.sessionStore.clearCookies(currentSite().id);
     this.lastReportedSignedIn = false;
     this.username = undefined;
@@ -1467,6 +1765,45 @@ export class LcSession implements vscode.Disposable {
 
   private log(line: string): void {
     this.deps.output.appendLine(line);
+    this.logRing.push(line);
+    if (this.logRing.length > 400) this.logRing.splice(0, this.logRing.length - 400);
+  }
+
+  /**
+   * 真实的编辑器分栏状态快照（只读）。
+   * 用来自检「自动分栏」到底成了没有——`setEditorLayout` 在部分宿主（如 Cursor）可能不可用，
+   * 光看日志判断不了最终布局，必须读 `tabGroups`。
+   */
+  async layoutSnapshot(): Promise<Record<string, unknown>> {
+    const groups = (vscode.window.tabGroups?.all ?? []).map((g) => ({
+      viewColumn: g.viewColumn,
+      isActive: g.isActive,
+      isLocked: Boolean((g as unknown as { isLocked?: boolean }).isLocked),
+      tabs: g.tabs.map((t) => {
+        const input = t.input as { viewType?: string; uri?: vscode.Uri } | undefined;
+        return {
+          label: t.label,
+          webview: typeof input?.viewType === 'string',
+          viewType: input?.viewType,
+          preview: t.isPreview,
+          dirty: t.isDirty,
+          fsPath: input?.uri?.fsPath,
+        };
+      }),
+    }));
+    return {
+      appName: vscode.env?.appName,
+      vscodeVersion: vscode.version,
+      groupCount: groups.length,
+      groups,
+      activeProblem: this.active?.slug,
+      activeLang: this.active?.langSlug,
+      sourceFile: this.active?.files.source.fsPath,
+      panelVisible: this.panel?.visible,
+      resultsViewResolved: this.resultsView.isResolved,
+      layoutConfig: vscode.workspace.getConfiguration('lcLocal').get('layout'),
+      logs: this.logRing.slice(-150),
+    };
   }
 
   /** 命令行：打开任意题目 */
@@ -1493,12 +1830,17 @@ export class LcSession implements vscode.Disposable {
     return true;
   }
 
-  /** 诊断信息（含工具链与调试器可用性），供「显示诊断信息」命令使用 */
+  /** 诊断信息（含工具链、分栏与调试器可用性），供「显示诊断信息」命令使用 */
   async diagnosticsAsync(): Promise<string> {
     const base = this.diagnostics();
     const lang = this.active?.langSlug ?? 'python3';
     const tc = await checkLangToolchain(lang);
-    const lines = [base, `langToolchain(${lang})=${tc.missing.length ? `缺少 ${tc.missing.join(',')}` : '齐全'}`];
+    const lines = [
+      base,
+      `editorGroups=${this.layout.groupCount() || 1}`,
+      `layout=${this.layout.describe()}`,
+      `langToolchain(${lang})=${tc.missing.length ? `缺少 ${tc.missing.join(',')}` : '齐全'}`,
+    ];
     if (tc.hints.length) lines.push(...tc.hints.map((h) => `  提示：${h}`));
     const plan = debugPlanFor({
       langSlug: lang,

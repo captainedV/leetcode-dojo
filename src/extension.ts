@@ -1,11 +1,13 @@
 /**
  * 扩展入口：注册命令、状态栏、受限补全。
  *
- * 使用范式（与需求一致）：
- *   点状态栏「LeetCode」→ 左栏内嵌 LeetCode 网页（可登录）→ 进入题目后右栏自动打开同名本地文件
- *   → 本地写代码 → 工具栏「本地运行 / 调试 / 官方运行 / 提交」。
+ * 使用范式：
+ *   点状态栏「LeetCode」→ 自动划分左右两栏（左栏内嵌 LeetCode 网页 + 右栏本地代码 IDE + 底部测试工作台）
+ *   → 本地写代码 → 一键运行 / 断点调试 / 官方运行 / 提交。
  */
 import * as vscode from 'vscode';
+import { mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { LcSession } from './core/session.js';
 import { ProblemStore } from './core/workspace.js';
 import { normalizeLangSlug } from './core/langs.js';
@@ -52,6 +54,8 @@ export function activate(context: vscode.ExtensionContext): void {
   register('lcLocal.setSession', () => s().setSessionFromInput());
   register('lcLocal.signOut', () => s().signOut());
   register('lcLocal.openPanel', () => s().openResultsPanel());
+  register('lcLocal.resetLayout', () => s().resetLayout());
+  register('lcLocal.quickMenu', () => s().showQuickMenu());
   register('lcLocal.openProblem', () => s().openProblemInteractive());
   register('lcLocal.reloadPage', () => s().reloadPage());
   register('lcLocal.refreshSession', () => s().refreshSession(true));
@@ -87,6 +91,72 @@ export function activate(context: vscode.ExtensionContext): void {
 
   void vscode.commands.executeCommand('setContext', 'lcLocal.active', false);
   log('LeetCode Local IDE 已激活（点状态栏「LeetCode」进入练习模式）');
+
+  // 自检探针：只在设置了 LC_LOCAL_SELFTEST 时启用，用来在真实宿主里核对「自动分栏」的最终布局
+  if (process.env.LC_LOCAL_SELFTEST) {
+    scheduleSelfTest(context, log);
+  }
+}
+
+/**
+ * 自检：模拟用户点「进入 LeetCode 模式」，然后把真实的 tabGroups 布局写进 JSON。
+ * 仅在 LC_LOCAL_SELFTEST 环境变量存在时运行，正常使用完全不受影响。
+ */
+function scheduleSelfTest(context: vscode.ExtensionContext, log: (line: string) => void): void {
+  void (async () => {
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const outPath =
+      process.env.LC_LOCAL_SELFTEST_OUT || join(context.globalStorageUri.fsPath, 'selftest.json');
+    const dump = async (phase: string): Promise<void> => {
+      try {
+        const snap = session ? await session.layoutSnapshot() : { error: 'no session' };
+        const payload = { phase, at: new Date().toISOString(), env: process.env.LC_LOCAL_SELFTEST, snapshot: snap };
+        await mkdir(dirname(outPath), { recursive: true });
+        await writeFile(`${outPath}.${phase}.json`, JSON.stringify(payload, null, 2), 'utf8');
+        log(`[selftest] ${phase} → ${outPath}.${phase}.json（分栏数=${(snap as { groupCount?: number }).groupCount}）`);
+      } catch (err) {
+        log(`[selftest] dump 失败：${(err as Error).message}`);
+      }
+    };
+    try {
+      await wait(2500);
+      await dump('before');
+      await vscode.commands.executeCommand('lcLocal.enter');
+      await wait(5000);
+      await dump('after-enter');
+      // 关键：真正打开一道题，看代码文件是否落在右栏、题面是否还在左栏
+      const s2 = session as unknown as { openProblem?: (slug: string, opts?: unknown) => Promise<void> };
+      if (typeof s2?.openProblem === 'function') {
+        await s2.openProblem('two-sum', { fromPage: false });
+        await wait(6000);
+        await dump('after-problem');
+        // 再切一道题，检查 revealIfOpen / 复用标签页是否会抢回左栏
+        await s2.openProblem('add-two-numbers', { fromPage: false });
+        await wait(6000);
+        await dump('after-problem2');
+      } else {
+        log('[selftest] 无法调用 openProblem，跳过题目阶段');
+      }
+      // 模拟用户把文件开到左栏（点文件树 / 断点跳转），验证布局守护能否自愈
+      const snap = (await session?.layoutSnapshot()) as { sourceFile?: string } | undefined;
+      if (snap?.sourceFile) {
+        const doc = await vscode.workspace.openTextDocument(snap.sourceFile);
+        await vscode.window.showTextDocument(doc, {
+          viewColumn: vscode.ViewColumn.One,
+          preserveFocus: false,
+          preview: false,
+        });
+        await wait(2500);
+        await dump('after-steal');
+      }
+      await vscode.commands.executeCommand('lcLocal.resetLayout');
+      await wait(3000);
+      await dump('after-reset');
+      log('[selftest] 完成');
+    } catch (err) {
+      log(`[selftest] 失败：${(err as Error).message}`);
+    }
+  })();
 }
 
 function registerCompletionProviders(context: vscode.ExtensionContext, getSession: () => LcSession | undefined): void {
@@ -128,14 +198,6 @@ function registerCompletionProviders(context: vscode.ExtensionContext, getSessio
   context.subscriptions.push(
     vscode.languages.registerCompletionItemProvider({ scheme: 'file' }, signature, '.', '(', '>', ':'),
   );
-
-  // 状态栏入口：一个按钮进入 LeetCode 模式
-  const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
-  status.command = 'lcLocal.enter';
-  status.text = '$(browser) LeetCode';
-  status.tooltip = '进入 LeetCode 模式：左侧 LeetCode 网页（可登录）+ 右侧本地 IDE';
-  status.show();
-  context.subscriptions.push(status);
 }
 
 export function deactivate(): void {

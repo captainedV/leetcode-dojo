@@ -38,6 +38,9 @@ interface BridgeState {
   hideEditor: boolean;
   /** 站点是否已经挂载 monaco */
   hasMonaco: boolean;
+  /** 上次同步进 Monaco 的代码与模型，避免每次 DOM 变更重复序列化整份代码 */
+  lastSyncedCode?: string;
+  lastSyncedModel?: unknown;
   /** 是否已把代码同步进站点 monaco（供用户点站点按钮时的一致性） */
   pendingSubmissions: Map<string, 'run' | 'submit'>;
   lastJudge?: unknown;
@@ -435,86 +438,133 @@ function visibleRect(el: HTMLElement): PaneRect {
   return { el, left: r.left, top: r.top, width: r.width, height: r.height };
 }
 
+function setStyleImportant(el: HTMLElement, prop: string, val: string): void {
+  if (el.style.getPropertyValue(prop) === val && el.style.getPropertyPriority(prop) === 'important') return;
+  el.style.setProperty(prop, val, 'important');
+}
+
+function removeManagedStyles(el: HTMLElement): void {
+  for (const prop of ['display', 'left', 'top', 'width', 'height', '--width', '--height']) {
+    if (el.style.getPropertyPriority(prop) === 'important') {
+      el.style.removeProperty(prop);
+    }
+  }
+}
+
+let observedLayoutEl: HTMLElement | null = null;
+let layoutResizeObserver: ResizeObserver | null = null;
+
+function ensureLayoutResizeObserver(layout: HTMLElement): void {
+  if (observedLayoutEl === layout || typeof ResizeObserver === 'undefined') return;
+  layoutResizeObserver?.disconnect();
+  observedLayoutEl = layout;
+  layoutResizeObserver = new ResizeObserver(() => {
+    scheduleFocusFrame();
+  });
+  layoutResizeObserver.observe(layout);
+}
+
 /**
  * 只保留题面：站点布局是 FlexLayout（所有面板绝对定位 + 内联 left/top/width/height），
- * 因此不能只 display:none 右侧面板——必须同时把题面 set 拉到满宽，否则会留白。
+ * 因此不能只 display:none 右侧面板——必须同时把题面 tabset 拉到满宽，否则会留白。
+ * 同时保留题面 tabset 下「题目描述 / 题解 / 提交记录」多标签自由切换能力。
  */
 function applyFocusMode(): void {
   const layout = document.querySelector('.flexlayout__layout') as HTMLElement | null;
   const root = document.documentElement;
   if (!layout) return;
+  ensureLayoutResizeObserver(layout);
+
   const kids = [...layout.children] as HTMLElement[];
   const tabsets = kids.filter((k) => k.classList.contains('flexlayout__tabset'));
   const panes = kids.filter((k) => k.classList.contains('flexlayout__tab'));
+
+  if (!state.hideEditor || !currentSlug()) {
+    if (root.classList.contains('lc-focus')) {
+      root.classList.remove('lc-focus');
+      for (const k of kids) removeManagedStyles(k);
+    }
+    return;
+  }
 
   const descTabset =
     tabsets.find((ts) => /题目描述|Description/i.test(ts.querySelector('.flexlayout__tab_button_content')?.textContent ?? '')) ??
     tabsets[0];
   if (!descTabset) return;
 
-  // 先记下几何信息（隐藏之后就取不到了）
   const tsRect = visibleRect(descTabset);
-  const descPane =
-    panes.find((p) => {
+  const tsPath = descTabset.getAttribute('data-layout-path');
+
+  // 识别属于左侧题面 tabset 的所有 tab 内容面板（含「题目描述」「题解」「提交记录」）
+  const belongsToDesc = (p: HTMLElement): boolean => {
+    if (p.querySelector('#editor')) return false;
+    const pPath = p.getAttribute('data-layout-path');
+    if (tsPath && pPath) return pPath.startsWith(`${tsPath}/`);
+    // 无 data-layout-path 兜底：先撤销我们之前加的 !important display 再看几何归属
+    if (p.dataset.lcHiddenByBridge === '1') {
+      p.style.removeProperty('display');
+      delete p.dataset.lcHiddenByBridge;
+    }
+    const r = p.getBoundingClientRect();
+    if (r.width < 40 || r.height < 40) return false;
+    return Math.abs(r.left - tsRect.left) < 48;
+  };
+
+  const descPanes = panes.filter(belongsToDesc);
+  const activeDescPane =
+    descPanes.find((p) => {
+      // 若之前被我们标过隐藏先清掉，交还给 FlexLayout 自己决定当前选中的 tab
+      if (p.dataset.lcHiddenByBridge === '1') {
+        p.style.removeProperty('display');
+        delete p.dataset.lcHiddenByBridge;
+      }
+      const inlineDisplay = p.style.getPropertyValue('display');
+      const inlinePrio = p.style.getPropertyPriority('display');
+      if (inlineDisplay === 'none' && inlinePrio !== 'important') return false;
       const r = p.getBoundingClientRect();
-      if (r.width < 40 || r.height < 40) return false;
-      if (p.querySelector('#editor')) return false;
-      return Math.abs(r.left - tsRect.left) < 48;
-    }) ?? null;
-  // tab 按钮行高度：优先量 tabset 的 header；量不到再退回几何差（首次同步时布局可能还没就位）
+      return r.width >= 20 && r.height >= 20;
+    }) ?? descPanes[0] ?? null;
+
   const headerEl = descTabset.querySelector('.flexlayout__tabset_header') as HTMLElement | null;
   const headerH = headerEl ? headerEl.getBoundingClientRect().height : 0;
-  const geometric = descPane ? Math.round(descPane.getBoundingClientRect().top - tsRect.top) : 0;
+  const geometric = activeDescPane ? Math.round(activeDescPane.getBoundingClientRect().top - tsRect.top) : 0;
   const paneOffset = headerH > 8 ? Math.round(headerH) : geometric > 8 ? geometric : 36;
 
-  if (!state.hideEditor) {
-    root.classList.remove('lc-focus');
-    for (const k of kids) {
-      k.style.removeProperty('display');
-      k.style.removeProperty('left');
-      k.style.removeProperty('top');
-      k.style.removeProperty('width');
-      k.style.removeProperty('height');
-    }
-    return;
+  if (!root.classList.contains('lc-focus')) {
+    root.classList.add('lc-focus');
   }
-
-  // 只在题目页（/problems/<slug>/）做布局改造；学习计划、题库列表等页面保持原样，
-  // 否则可能把用户要点的列表也隐藏掉。
-  if (!currentSlug()) {
-    root.classList.remove('lc-focus');
-    for (const k of kids) {
-      k.style.removeProperty('display');
-      k.style.removeProperty('left');
-      k.style.removeProperty('top');
-      k.style.removeProperty('width');
-      k.style.removeProperty('height');
-    }
-    return;
-  }
-
-  root.classList.add('lc-focus');
   ensureFocusStyle();
 
-  // 1) 隐藏除「题面 tabset / 题面 pane」以外的一切
+  const descPaneSet = new Set(descPanes);
+
+  // 1) 隐藏右侧代码编辑器与测试用例 tabset/pane，但不干扰题面 tabset 下未激活的兄弟 tab（如题解/提交记录）
   for (const k of kids) {
-    if (k === descTabset || k === descPane) continue;
-    k.style.setProperty('display', 'none', 'important');
+    if (k === descTabset) continue;
+    if (descPaneSet.has(k)) {
+      if (k !== activeDescPane) {
+        removeManagedStyles(k);
+      }
+      continue;
+    }
+    k.dataset.lcHiddenByBridge = '1';
+    setStyleImportant(k, 'display', 'none');
   }
+
   // 2) 题面 tabset 铺满
-  descTabset.style.setProperty('left', '0px', 'important');
-  descTabset.style.setProperty('top', '0px', 'important');
-  descTabset.style.setProperty('width', '100%', 'important');
-  descTabset.style.setProperty('height', '100%', 'important');
-  // 3) 题面 pane 铺满（tab 按钮行留出来）
-  if (descPane) {
-    descPane.style.setProperty('display', 'flex', 'important');
-    descPane.style.setProperty('left', '0px', 'important');
-    descPane.style.setProperty('top', `${paneOffset}px`, 'important');
-    descPane.style.setProperty('width', '100%', 'important');
-    descPane.style.setProperty('height', `calc(100% - ${paneOffset}px)`, 'important');
-    descPane.style.setProperty('--width', '100%', 'important');
-    descPane.style.setProperty('--height', `calc(100% - ${paneOffset}px)`, 'important');
+  setStyleImportant(descTabset, 'left', '0px');
+  setStyleImportant(descTabset, 'top', '0px');
+  setStyleImportant(descTabset, 'width', '100%');
+  setStyleImportant(descTabset, 'height', '100%');
+
+  // 3) 当前激活的题面/题解/提交记录 pane 铺满（tab 按钮行留出来）
+  if (activeDescPane) {
+    setStyleImportant(activeDescPane, 'display', 'flex');
+    setStyleImportant(activeDescPane, 'left', '0px');
+    setStyleImportant(activeDescPane, 'top', `${paneOffset}px`);
+    setStyleImportant(activeDescPane, 'width', '100%');
+    setStyleImportant(activeDescPane, 'height', `calc(100% - ${paneOffset}px)`);
+    setStyleImportant(activeDescPane, '--width', '100%');
+    setStyleImportant(activeDescPane, '--height', `calc(100% - ${paneOffset}px)`);
   }
 }
 
@@ -523,8 +573,22 @@ function ensureOverlay(): void {
   applyFocusMode();
 }
 
+let focusRafId = 0;
+function scheduleFocusFrame(): void {
+  if (focusRafId) return;
+  focusRafId = window.requestAnimationFrame(() => {
+    focusRafId = 0;
+    try {
+      applyFocusMode();
+    } catch (err) {
+      reportError('focus-raf', err);
+    }
+  });
+}
+
 let domSyncTimer: ReturnType<typeof setTimeout> | undefined;
-function scheduleDomSync(): void {
+function scheduleDomSync(withMonaco = false): void {
+  if (withMonaco) state.lastSyncedCode = undefined;
   if (domSyncTimer) return;
   domSyncTimer = setTimeout(() => {
     domSyncTimer = undefined;
@@ -534,10 +598,10 @@ function scheduleDomSync(): void {
     } catch (err) {
       reportError('dom-sync', err);
     }
-  }, 150);
+  }, 120);
 }
 
-/** 把本地代码同步进站点自己的 Monaco 模型（尽力而为，保证站点内部状态一致）。 */
+/** 把本地代码同步进站点自己的 Monaco 模型（按需同步，避免高频序列化大字符串）。 */
 function syncMonaco(): void {
   if (!state.code) return;
   const monacoAny = (window as unknown as { monaco?: MonacoLike }).monaco;
@@ -547,11 +611,14 @@ function syncMonaco(): void {
     const models = monacoAny.editor.getModels();
     if (!models?.length) return;
     const model = models[0];
+    if (state.lastSyncedModel === model && state.lastSyncedCode === state.code) return;
     const current = typeof model.getValue === 'function' ? model.getValue() : '';
     if (current !== state.code && typeof model.setValue === 'function') {
       model.setValue(state.code);
       log('debug', '已把本地代码同步进站点 Monaco（保持网页状态一致）');
     }
+    state.lastSyncedModel = model;
+    state.lastSyncedCode = state.code;
   } catch (err) {
     reportError('sync-monaco', err);
   }
@@ -564,36 +631,56 @@ interface MonacoLike {
 }
 
 function watchDom(): void {
-  const observer = new MutationObserver(() => scheduleDomSync());
+  const observer = new MutationObserver(() => scheduleDomSync(false));
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  window.addEventListener('resize', () => scheduleDomSync());
+  window.addEventListener('resize', () => scheduleFocusFrame(), { passive: true });
+}
+
+/** 透传内嵌网页焦点下的快捷键到宿主（Cmd/Ctrl+Alt+Enter 本地运行，Cmd/Ctrl+Alt+S 提交，Cmd/Ctrl+Alt+H 提示） */
+function patchShortcuts(): void {
+  window.addEventListener('keydown', (ev) => {
+    if (!(ev.metaKey || ev.ctrlKey) || !ev.altKey) return;
+    const key = ev.key.toLowerCase();
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      post({ t: 'action', action: 'runLocal' });
+    } else if (key === 's') {
+      ev.preventDefault();
+      post({ t: 'action', action: 'submit' });
+    } else if (key === 'h') {
+      ev.preventDefault();
+      post({ t: 'action', action: 'aiHint' });
+    }
+  });
 }
 
 // -------------------------------------------------------------- 消息接收
 
 function onHostMessage(ev: MessageEvent): void {
   const data = ev.data as (HostMessage & { [LC_NS]?: boolean }) | undefined;
-  if (!data || typeof data !== 'object') return;
+  if (!data || typeof data !== 'object' || !('t' in data)) return;
   try {
-    switch (data.t) {
+    const msg: HostMessage = data;
+    switch (msg.t) {
       case 'push': {
-        state.code = data.code;
-        state.lang = data.lang;
-        state.fileName = data.fileName;
-        state.hideEditor = data.hideEditor ?? state.hideEditor;
-        scheduleDomSync();
+        const codeChanged = state.code !== msg.code;
+        state.code = msg.code;
+        state.lang = msg.lang;
+        state.fileName = msg.fileName;
+        state.hideEditor = msg.hideEditor ?? state.hideEditor;
+        scheduleDomSync(codeChanged);
         post({ t: 'state', slug: state.slug, lang: state.lang, hasMonaco: state.hasMonaco, editorFound: !!document.querySelector('#editor') });
         break;
       }
       case 'hello': {
         post({ t: 'ready', href: window.location.href, slug: currentSlug() });
-        scheduleDomSync();
+        scheduleDomSync(false);
         break;
       }
       case 'hideEditor': {
-        state.hideEditor = data.value;
+        state.hideEditor = msg.value;
         applyFocusMode();
-        log('info', data.value ? '已切换为「只显示题面」' : '已显示完整网页（含线上 IDE）');
+        log('info', msg.value ? '已切换为「只显示题面」' : '已显示完整网页（含线上 IDE）');
         break;
       }
       case 'status': {
@@ -604,7 +691,7 @@ function onHostMessage(ev: MessageEvent): void {
           hasMonaco: state.hasMonaco,
           editorFound: !!document.querySelector('#editor'),
         });
-        scheduleDomSync();
+        scheduleDomSync(false);
         break;
       }
       case 'requestCode': {
@@ -612,14 +699,17 @@ function onHostMessage(ev: MessageEvent): void {
         break;
       }
       case 'history': {
-        if (data.action === 'back') goBack();
-        else if (data.action === 'forward') history.forward();
-        else if (data.action === 'reload') window.location.reload();
-        else if (data.action === 'home') window.location.assign('/problemset/');
+        if (msg.action === 'back') goBack();
+        else if (msg.action === 'forward') history.forward();
+        else if (msg.action === 'reload') window.location.reload();
+        else if (msg.action === 'home') window.location.assign('/problemset/');
         break;
       }
-      default:
+      default: {
+        const _exhaustive: never = msg;
+        void _exhaustive;
         break;
+      }
     }
   } catch (err) {
     reportError('host-message', err);
@@ -640,28 +730,29 @@ function boot(): void {
     patchHistory();
     patchWindowOpen();
     patchBlankAnchors();
+    patchShortcuts();
     observingFetch();
     observingXhr();
     window.addEventListener('message', onHostMessage);
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', () => {
         watchDom();
-        scheduleDomSync();
+        scheduleDomSync(true);
       });
     } else {
       watchDom();
-      scheduleDomSync();
+      scheduleDomSync(true);
     }
-    // 心跳：React 重渲染、滚动、分栏拖拽后重新校正覆盖层位置
+    // 低频兜底心跳（页面隐藏时跳过，配合幂等样式写入实现零重排开销）
     setInterval(() => {
+      if (document.hidden) return;
       try {
         if (window.__lcBridge) window.__lcBridge.ticks++;
         applyFocusMode();
       } catch (err) {
         reportError('overlay-heartbeat', err);
       }
-    }, 400);
-    window.addEventListener('scroll', () => scheduleDomSync(), { passive: true, capture: true });
+    }, 1500);
 
     // SPA 路由兜底：某些跳转不经过 history API
     let lastPath = window.location.pathname;

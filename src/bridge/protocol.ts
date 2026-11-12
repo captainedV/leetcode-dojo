@@ -45,7 +45,7 @@ export type BridgeMessage =
   | { t: 'judgeResult'; kind: JudgeKind; result: NormalizedJudgeResult }
   | { t: 'judgeError'; kind: JudgeKind; message: string }
   | { t: 'needCode'; kind: JudgeKind }
-  | { t: 'action'; action: 'focusLocal' | 'aiHint' }
+  | { t: 'action'; action: 'focusLocal' | 'aiHint' | 'runLocal' | 'submit' }
   | { t: 'openExternal'; url: string }
   | { t: 'log'; level: 'debug' | 'info' | 'warn' | 'error'; message: string };
 
