@@ -1,0 +1,327 @@
+{
+  "name": "leetcode-local-ide",
+  "displayName": "LeetCode Local IDE",
+  "description": "在 VS Code / Cursor 中内嵌 LeetCode 网页，用本地 IDE 编写、调试、测试并提交代码。含 AI 补全限制与本地测试脚手架。",
+  "version": "0.2.6",
+  "publisher": "xialc",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other",
+    "Education"
+  ],
+  "keywords": [
+    "leetcode",
+    "algorithm",
+    "local ide",
+    "debug",
+    "coding interview"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "lcLocal.enter",
+        "title": "进入 LeetCode 模式",
+        "category": "LeetCode Local",
+        "icon": "$(browser)"
+      },
+      {
+        "command": "lcLocal.exit",
+        "title": "退出 LeetCode 模式",
+        "category": "LeetCode Local",
+        "icon": "$(close)"
+      },
+      {
+        "command": "lcLocal.runLocal",
+        "title": "本地运行测试",
+        "category": "LeetCode Local",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "lcLocal.debugLocal",
+        "title": "本地调试",
+        "category": "LeetCode Local",
+        "icon": "$(bug)"
+      },
+      {
+        "command": "lcLocal.runOnLeetCode",
+        "title": "在 LeetCode 上运行（官方判题）",
+        "category": "LeetCode Local",
+        "icon": "$(play)"
+      },
+      {
+        "command": "lcLocal.submit",
+        "title": "提交到 LeetCode",
+        "category": "LeetCode Local",
+        "icon": "$(cloud-upload)"
+      },
+      {
+        "command": "lcLocal.switchLanguage",
+        "title": "切换语言",
+        "category": "LeetCode Local",
+        "icon": "$(symbol-enum)"
+      },
+      {
+        "command": "lcLocal.reloadSnippet",
+        "title": "重置为官方模板",
+        "category": "LeetCode Local",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "lcLocal.regenerateHarness",
+        "title": "重建本地测试脚手架",
+        "category": "LeetCode Local"
+      },
+      {
+        "command": "lcLocal.aiHarness",
+        "title": "AI 生成测试脚手架（示例不足时）",
+        "category": "LeetCode Local"
+      },
+      {
+        "command": "lcLocal.aiHint",
+        "title": "获取提示（不直接给答案）",
+        "category": "LeetCode Local",
+        "icon": "$(lightbulb)"
+      },
+      {
+        "command": "lcLocal.setSession",
+        "title": "设置登录 Cookie（leetcode.com 备用）",
+        "category": "LeetCode Local"
+      },
+      {
+        "command": "lcLocal.setAiKey",
+        "title": "设置 AI API Key",
+        "category": "LeetCode Local"
+      },
+      {
+        "command": "lcLocal.toggleAiGuard",
+        "title": "开启/关闭 AI 补全限制",
+        "category": "LeetCode Local"
+      },
+      {
+        "command": "lcLocal.showDiagnostics",
+        "title": "显示诊断信息",
+        "category": "LeetCode Local"
+      },
+      {
+        "command": "lcLocal.openProblem",
+        "title": "打开题目…",
+        "category": "LeetCode Local",
+        "icon": "$(search)"
+      },
+      {
+        "command": "lcLocal.reloadPage",
+        "title": "刷新网页",
+        "category": "LeetCode Local"
+      },
+      {
+        "command": "lcLocal.refreshSession",
+        "title": "刷新登录状态",
+        "category": "LeetCode Local"
+      },
+      {
+        "command": "lcLocal.showLog",
+        "title": "显示输出面板",
+        "category": "LeetCode Local"
+      },
+      {
+        "command": "lcLocal.signOut",
+        "title": "退出登录（清除本地保存的登录态）",
+        "category": "LeetCode Local",
+        "icon": "$(sign-out)"
+      },
+      {
+        "command": "lcLocal.openPanel",
+        "title": "打开底部面板（测试用例 / 结果）",
+        "category": "LeetCode Local",
+        "icon": "$(layout-panel)"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "lcLocal.runLocal",
+        "key": "ctrl+alt+enter",
+        "mac": "cmd+alt+enter",
+        "when": "editorTextFocus && lcLocal.active"
+      },
+      {
+        "command": "lcLocal.submit",
+        "key": "ctrl+alt+s",
+        "mac": "cmd+alt+s",
+        "when": "editorTextFocus && lcLocal.active"
+      },
+      {
+        "command": "lcLocal.aiHint",
+        "key": "ctrl+alt+h",
+        "mac": "cmd+alt+h",
+        "when": "editorTextFocus && lcLocal.active"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "lcLocal.runLocal",
+          "when": "lcLocal.active",
+          "group": "navigation@1"
+        },
+        {
+          "command": "lcLocal.debugLocal",
+          "when": "lcLocal.active",
+          "group": "navigation@2"
+        },
+        {
+          "command": "lcLocal.submit",
+          "when": "lcLocal.active",
+          "group": "navigation@3"
+        },
+        {
+          "command": "lcLocal.openPanel",
+          "when": "lcLocal.active",
+          "group": "navigation@4"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "lcLocal.exit",
+          "when": "lcLocal.active"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "LeetCode Local IDE",
+      "properties": {
+        "lcLocal.site": {
+          "type": "string",
+          "enum": [
+            "leetcode.cn",
+            "leetcode.com"
+          ],
+          "default": "leetcode.cn",
+          "markdownDescription": "使用哪个站点。`leetcode.cn` 可在 IDE 内完整内嵌网页并登录；`leetcode.com` 受 Cloudflare 限制，退化为 API 模式（需粘贴登录 Cookie）。"
+        },
+        "lcLocal.hint.level": {
+          "type": "string",
+          "enum": [
+            "off",
+            "signature",
+            "line"
+          ],
+          "default": "signature",
+          "description": "AI 辅助强度：off=完全关闭；signature=只提示当前所用 API 的函数签名/用法；line=允许补全当前这一行（不会补出整题解法）"
+        },
+        "lcLocal.hint.maxLineChars": {
+          "type": "number",
+          "default": 80,
+          "description": "line 模式下单行补全的最大字符数"
+        },
+        "lcLocal.ai.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "启用 AI 增强（行内受限补全、提示、测试脚手架生成）。需要配置 API Key。"
+        },
+        "lcLocal.ai.baseUrl": {
+          "type": "string",
+          "default": "https://api.deepseek.com/v1",
+          "description": "OpenAI 兼容接口的 baseUrl"
+        },
+        "lcLocal.ai.model": {
+          "type": "string",
+          "default": "deepseek-chat",
+          "description": "模型名称"
+        },
+        "lcLocal.ai.apiKey": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "API Key。保存在用户设置中；也可用环境变量 `LC_LOCAL_AI_KEY` 覆盖。"
+        },
+        "lcLocal.proxy.port": {
+          "type": "number",
+          "default": 0,
+          "description": "内嵌网页代理端口，0 表示自动分配"
+        },
+        "lcLocal.proxy.injectBridge": {
+          "type": "boolean",
+          "default": true,
+          "description": "向 LeetCode 页面注入桥接脚本（隐藏站点编辑器、接管运行/提交）。关闭后仅作为普通浏览器使用。"
+        },
+        "lcLocal.run.timeoutMs": {
+          "type": "number",
+          "default": 20000,
+          "description": "单次本地测试的超时时间（毫秒）"
+        },
+        "lcLocal.run.debugPort": {
+          "type": "number",
+          "default": 5678,
+          "description": "本地调试使用的调试端口"
+        },
+        "lcLocal.aiGuard.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "进入 LeetCode 模式时限制其他 AI 补全插件（Copilot / Cursor Tab 设置项）在题目目录内生效"
+        },
+        "lcLocal.workspace.subdir": {
+          "type": "string",
+          "default": "leetcode",
+          "description": "题目文件存放的子目录（相对于当前工作区根目录）"
+        },
+        "lcLocal.run.defaultLang": {
+          "type": "string",
+          "default": "python3",
+          "description": "默认语言（进入题目时优先使用）"
+        },
+        "lcLocal.editor.hideSiteEditor": {
+          "type": "boolean",
+          "default": true,
+          "description": "用覆盖层替换网页里的代码编辑器（关闭后网页编辑器照常可见，代码仍会同步）"
+        },
+        "lcLocal.python.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "指定本地 Python 解释器路径（例如 `/opt/homebrew/bin/python3.13`）。留空则自动挑选：优先 3.10+（LeetCode 模板里的 `ListNode | None` 需要它），同版本取最高。"
+        }
+      }
+    },
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "lcLocalPanel",
+          "title": "LeetCode",
+          "icon": "$(beaker)"
+        }
+      ]
+    },
+    "views": {
+      "lcLocalPanel": [
+        {
+          "id": "lcLocal.results",
+          "name": "测试用例 / 结果",
+          "type": "webview",
+          "when": "lcLocal.active"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "vscode:prepublish": "npm run build",
+    "package": "npm run build && vsce package --no-dependencies --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.1",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

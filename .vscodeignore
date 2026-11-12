@@ -1,0 +1,16 @@
+.vscode/**
+src/**
+test/**
+scripts/**
+node_modules/**
+out/**
+*.ts
+tsconfig.json
+vitest.config.ts
+.gitignore
+**/*.map
+!dist/**
+!media/**
+!package.json
+!README.md
+!LICENSE
