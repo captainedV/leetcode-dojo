@@ -1,0 +1,21 @@
+# 依赖与构建产物
+node_modules/
+dist/
+out/
+*.vsix
+*.tsbuildinfo
+
+# 本地/临时
+.DS_Store
+*.log
+coverage/
+.vscode-test/
+tmp/
+
+# 编辑器个人配置（不强制团队共享时）
+.vscode/*
+!.vscode/extensions.json
+
+# 插件运行期生成的题目工作区（用户本地数据，不入库）
+leetcode/
+selftest.json*
