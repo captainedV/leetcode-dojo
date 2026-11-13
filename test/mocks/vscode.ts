@@ -98,36 +98,81 @@ export class Uri {
 
 // ------------------------------------------------------------------ 配置
 
+/** 已装扩展贡献的配置项（key → 默认值），让 inspect 能像真实 VS Code 一样认出"已注册"的键 */
+function contributedSettings(): Map<string, unknown> {
+  const out = new Map<string, unknown>();
+  for (const pkg of installedExtensions.values()) {
+    const conf = (pkg as { contributes?: { configuration?: unknown } } | undefined)?.contributes?.configuration;
+    if (!conf) continue;
+    const blocks = Array.isArray(conf) ? conf : [conf];
+    for (const block of blocks as Array<{ properties?: Record<string, { default?: unknown }> }>) {
+      for (const [k, v] of Object.entries(block.properties ?? {})) out.set(k, v?.default);
+    }
+  }
+  return out;
+}
+
 class Config {
-  constructor(
-    private section: string,
-    private values: Map<string, unknown>,
-  ) {}
+  constructor(private section: string) {}
+
+  private full(key: string): string {
+    return this.section ? `${this.section}.${key}` : key;
+  }
 
   get<T>(key: string, defaultValue?: T): T {
-    const full = this.section ? `${this.section}.${key}` : key;
-    return (this.values.has(full) ? (this.values.get(full) as T) : defaultValue) as T;
+    const full = this.full(key);
+    if (workspaceSettings.has(full)) return workspaceSettings.get(full) as T;
+    if (userSettings.has(full)) return userSettings.get(full) as T;
+    if (globalConfigValues.has(full)) return globalConfigValues.get(full) as T;
+    if (defaults.has(full)) return defaults.get(full) as T;
+    return defaultValue as T;
   }
   has(key: string): boolean {
-    return this.values.has(`${this.section}.${key}`);
+    const full = this.full(key);
+    return (
+      workspaceSettings.has(full) ||
+      userSettings.has(full) ||
+      globalConfigValues.has(full) ||
+      defaults.has(full) ||
+      contributedSettings().has(full)
+    );
   }
   inspect(key: string) {
-    const full = `${this.section}.${key}`;
-    if (!this.values.has(full)) return undefined;
+    const full = this.full(key);
+    const contributed = contributedSettings();
+    const known =
+      workspaceSettings.has(full) ||
+      userSettings.has(full) ||
+      globalConfigValues.has(full) ||
+      defaults.has(full) ||
+      contributed.has(full);
+    if (!known) return undefined;
     return {
       key: full,
-      globalValue: undefined,
-      workspaceValue: this.values.get(full),
+      globalValue: userSettings.get(full),
+      workspaceValue: workspaceSettings.get(full),
       workspaceFolderValue: undefined,
-      defaultValue: undefined,
+      defaultValue: defaults.has(full) ? defaults.get(full) : contributed.get(full),
     };
   }
-  async update(key: string, value: unknown, _target?: ConfigurationTarget): Promise<void> {
-    globalConfigValues.set(`${this.section}.${key}`, value);
+  async update(key: string, value: unknown, target?: ConfigurationTarget): Promise<void> {
+    const full = this.full(key);
+    const scope = target === ConfigurationTarget.Global ? 'user' : 'workspace';
+    if (scope === 'workspace' && !workspaceFolders.length) {
+      // 真实 VS Code 在没有打开文件夹时会拒绝写工作区设置
+      throw new Error('Unable to write to Workspace Settings because no workspace is opened.');
+    }
+    const store = scope === 'user' ? userSettings : workspaceSettings;
+    if (value === undefined) store.delete(full);
+    else store.set(full, value);
   }
 }
 
 export const globalConfigValues = new Map<string, unknown>();
+/** user（Global）作用域写入的值 */
+export const userSettings = new Map<string, unknown>();
+/** workspace 作用域写入的值 */
+export const workspaceSettings = new Map<string, unknown>();
 /** 测试可改的默认配置 */
 const defaults = new Map<string, unknown>([
   ['lcLocal.site', 'leetcode.cn'],
@@ -144,6 +189,7 @@ const defaults = new Map<string, unknown>([
   ['lcLocal.aiGuard.enabled', true],
   ['lcLocal.workspace.subdir', 'leetcode'],
   ['lcLocal.editor.hideSiteEditor', true],
+  ['editor.inlineSuggest.enabled', true],
   ['lcLocal.layout.autoSplit', true],
   ['lcLocal.layout.leftRatio', 0.45],
   ['lcLocal.layout.lockLeftGroup', true],
@@ -220,10 +266,7 @@ export const workspace = {
     return [...openDocs.values()];
   },
   getConfiguration(section: string) {
-    const values = new Map<string, unknown>();
-    for (const [k, v] of defaults) if (k.startsWith(section + '.')) values.set(k, v);
-    for (const [k, v] of globalConfigValues) if (k.startsWith(section + '.')) values.set(k, v);
-    return new Config(section, values);
+    return new Config(section);
   },
   async openTextDocument(uri: Uri | string): Promise<MockDocument> {
     const u = typeof uri === 'string' ? Uri.file(uri) : uri;
@@ -630,16 +673,21 @@ export const languages = {
   },
 };
 
-/** 测试可配置的「已安装扩展」集合 */
-const installedExtensions = new Set<string>();
-export function __setInstalledExtensions(ids: string[]): void {
+/** 测试可配置的「已安装扩展」集合（可附带 package.json 以模拟贡献的设置项） */
+const installedExtensions = new Map<string, unknown>();
+export function __setInstalledExtensions(ids: string[], packages: Record<string, unknown> = {}): void {
   installedExtensions.clear();
-  for (const id of ids) installedExtensions.add(id.toLowerCase());
+  for (const id of ids) installedExtensions.set(id.toLowerCase(), packages[id] ?? packages[id.toLowerCase()]);
 }
 
 export const extensions = {
   get all() {
-    return [...installedExtensions].map((id) => ({ id, isActive: true, activate: async () => ({}) }));
+    return [...installedExtensions.entries()].map(([id, packageJSON]) => ({
+      id,
+      isActive: true,
+      activate: async () => ({}),
+      packageJSON,
+    }));
   },
   getExtension(id: string) {
     return installedExtensions.has(id.toLowerCase()) ? { id, isActive: true, activate: async () => ({}) } : undefined;

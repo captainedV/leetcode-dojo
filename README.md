@@ -8,7 +8,7 @@
 
 **本地跑测试 · 断点调试 · 官方判题提交 · AI 只提示不代写**
 
-[![version](https://img.shields.io/badge/version-0.4.2-2f81f7)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.4.3-2f81f7)](CHANGELOG.md)
 [![VS Code](https://img.shields.io/badge/VS%20Code-%E2%89%A51.90-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
 [![Cursor](https://img.shields.io/badge/Cursor-supported-000000)](https://cursor.com/)
 [![license](https://img.shields.io/badge/license-MIT-3fb950)](LICENSE)
@@ -76,10 +76,10 @@
 
 ```bash
 # VS Code
-code --install-extension leetcode-local-ide-0.4.2.vsix
+code --install-extension leetcode-local-ide-0.4.3.vsix
 
 # Cursor
-cursor --install-extension leetcode-local-ide-0.4.2.vsix
+cursor --install-extension leetcode-local-ide-0.4.3.vsix
 ```
 
 > 也可以在 `扩展` 面板右上 `…` → `从 VSIX 安装…`。安装后**重载窗口**。
@@ -92,7 +92,7 @@ cursor --install-extension leetcode-local-ide-0.4.2.vsix
 git clone https://github.com/captainedV/leetcode-dojo.git
 cd leetcode-dojo
 npm ci && npm run package
-code --install-extension leetcode-local-ide-0.4.2.vsix
+code --install-extension leetcode-local-ide-0.4.3.vsix
 ```
 </details>
 
@@ -281,6 +281,7 @@ heapq.heappush(h, (dist, node)) # 想不起参数顺序时，会补出 (h, item)
 | `lcLocal.hint.level` | `signature` | AI 补全强度 |
 | `lcLocal.ai.*` | — | API Key / 模型 / 接口地址 |
 | `lcLocal.aiGuard.enabled` | `true` | 进入练习模式时压制其它 AI 补全 |
+| `lcLocal.aiGuard.aggressive` | `false` | 连编辑器的灰字补全（`editor.inlineSuggest`）一起关掉，彻底静音 |
 | `lcLocal.python.path` | — | 指定 Python 解释器 |
 | `lcLocal.run.defaultLang` | `python3` | 进题默认语言 |
 | `lcLocal.run.timeoutMs` | `20000` | 本地测试超时 |
@@ -307,6 +308,23 @@ heapq.heappush(h, (dist, node)) # 想不起参数顺序时，会补出 (h, item)
 <summary><b>点调试提示"配置的类型 debugpy 不受支持"</b></summary>
 
 没装 Python 调试器插件。装 `Python Debugger` 后重试，或先点「本地运行」。
+</details>
+
+<details>
+<summary><b>登录后 Copilot 还在自动补全整个函数？</b></summary>
+
+进入 LeetCode 模式时插件会自动压制 Copilot 的补全设置：
+
+- 有打开文件夹 → 写入**工作区设置**；没打开文件夹 → 写入**用户设置**（退出时自动还原）
+- 会从已安装的 Copilot 扩展里自动识别当前版本的开关键（版本间键名变过好几次）
+
+压不住时按顺序试：
+
+1. 重载窗口（`Developer: Reload Window`）—— Copilot 常需要重载才响应设置变更
+2. 命令 `LeetCode Dojo: 显示诊断信息`，看 `guard=` 与 `guardSettings=` 两行，确认值真的是 `{"*":false}`
+3. 打开设置项 `lcLocal.aiGuard.aggressive`：连编辑器灰字补全一起关（代价：本插件的 ghost text 也停用，签名提示仍可用）
+4. 仍然不行就是 Copilot 自身不响应设置，只能在 Copilot 面板里临时停用该扩展
+
 </details>
 
 <details>

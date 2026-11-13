@@ -2,7 +2,7 @@
   "name": "leetcode-local-ide",
   "displayName": "LeetCode Dojo",
   "description": "在 VS Code / Cursor 里刷 LeetCode：左栏题面 + 右栏本地 IDE，本地编译调试、官方判题提交，并把 AI 补全限制在「API 提示 / 单行」级别。",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "publisher": "xialc",
   "license": "MIT",
   "engines": {
@@ -327,6 +327,11 @@
           "type": "number",
           "default": 120000,
           "description": "等待 LeetCode 判题结果的超时时间（毫秒）。超时后会自动复位「判题中」状态"
+        },
+        "lcLocal.aiGuard.aggressive": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "激进模式：除压制 Copilot/Cursor 的设置外，连 `editor.inlineSuggest.enabled` 一起关掉（彻底静音灰字补全；代价是本插件的 ghost text 也会停用，签名提示仍可用）"
         }
       }
     },

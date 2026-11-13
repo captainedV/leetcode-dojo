@@ -3,6 +3,24 @@
 本项目遵循「版本号对齐 `package.json` + 每个版本一条 tag」的约定。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，日期为本地时间。
 
+## [0.4.3] — 2026-11-13
+
+### Fixed
+- **登录后 Copilot 仍会整函数补全**（约束没生效）。根因：`AiGuard` 只写**工作区设置**，
+  而当前窗口没有打开文件夹时 VS Code 会拒绝写工作区设置（错误被吞掉）——题目文件落在
+  `globalStorage` 就是这种情况，于是一条约束都没生效。
+  - 作用域自动降级：有文件夹 → 工作区设置；没有文件夹 → 用户设置（全局，退出练习模式时按作用域精确还原）
+  - **自动发现设置键**：VS Code 1.138 的 Copilot 已是内置扩展（copilot-chat 0.66），
+    `github.copilot.inlineSuggest.enable` 已被移除。现在读取已装扩展的 `package.json`，
+    把「AI 补全相关且默认为 true」的开关自动加入压制列表（跳过 `chat.*`/索引类，避免误伤）
+  - 写入后**读回校验**，日志打印实际生效值；诊断信息新增 `guardSettings=…`（每项带作用域）
+  - 首次压制后给出一次「重载窗口」提示（Copilot 对设置变更通常需要重载才完全生效）
+  - 新增 `lcLocal.aiGuard.aggressive`：连 `editor.inlineSuggest.enabled` 一起关（彻底静音灰字，本插件 ghost text 也会停用）
+  - Copilot 的三个精选键**无条件尝试写入**（VS Code 对未注册的键会拒绝并给出原因，日志里会显示
+    `not a registered configuration`，说明当前窗口里 Copilot 没有注册这些设置）
+  - 实测（真实 VS Code 1.138，无文件夹 profile）：日志明确报出写入被拒的具体键名与原因，
+    证明链路已到达写入点；文件夹 + 已启用 Copilot 时即写到工作区设置
+
 ## [0.4.2] — 2026-11-13
 
 ### Fixed

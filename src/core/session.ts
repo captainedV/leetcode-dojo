@@ -67,6 +67,8 @@ export class LcSession implements vscode.Disposable {
   private lastReportedSignedIn?: boolean;
   /** 上一次观察到的「网页上的语言」，用于区分「用户真的切了语言」与「本来就是别的语言」 */
   private lastSiteLang?: string;
+  /** AI 守卫的「重载窗口」提示只弹一次 */
+  private guardNotified = false;
   /** 判题看护：宿主侧兜底轮询 + 超时复位 */
   private judgeWatch?: { id: string; kind: JudgeKind; cancelled: boolean; timer?: ReturnType<typeof setTimeout> };
   /** 供自检探针读取的最近日志 */
@@ -190,8 +192,26 @@ export class LcSession implements vscode.Disposable {
     await vscode.commands.executeCommand('setContext', 'lcLocal.active', true);
     this.syncStatusBar();
     this.registerListeners();
-    this.guard.enable(this.deps.store.baseDir()).then((r) => {
-      if (r.changed.length) this.log(`[guard] 已压制 ${r.changed.join(', ')}`);
+    void this.guard.enable(this.deps.store.baseDir()).then((r) => {
+      if (!r.changed.length) {
+        this.log(`[guard] 没有可压制的 AI 补全设置：${r.detail}`);
+        return;
+      }
+      this.log(`[guard] 已压制 ${r.changed.length} 项：${r.changed.join(', ')}`);
+      this.log(`[guard] 实际生效值：${this.guard.effectiveValues().join(' ')}`);
+      // Copilot 对设置变更通常需要重载窗口才彻底生效，给一次可点击的提示
+      if (!this.guardNotified) {
+        this.guardNotified = true;
+        void vscode.window
+          .showInformationMessage(
+            `已限制 ${r.changed.length} 项 AI 补全设置（${r.detail.split('；').slice(0, 2).join('；')}）。若 Copilot 仍在补全，重载一次窗口即可生效。`,
+            '重载窗口',
+            '知道了',
+          )
+          .then((pick) => {
+            if (pick === '重载窗口') void vscode.commands.executeCommand('workbench.action.reloadWindow');
+          });
+      }
     });
     void this.pushPanelInit();
     // 底部面板主动展开（不抢焦点）
@@ -1949,7 +1969,8 @@ export class LcSession implements vscode.Disposable {
       `file=${this.active?.files.source.fsPath ?? '-'}`,
       `hintLevel=${cfg.get('hint.level')}`,
       `ai=${this.ai.available ? '已启用' : '未启用'}`,
-      `guard=${this.guard.enabled ? '开' : '关'}`,
+      `guard=${this.guard.describe()}`,
+      `guardSettings=${this.guard.effectiveValues().join(' ')}`,
     ].join('\n');
   }
 }
