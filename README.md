@@ -15,9 +15,9 @@
 
 [⬇️ 安装](#安装) · [✨ 功能](#功能速览) · [🚀 三分钟上手](#三分钟上手) · [🤖 AI 限制](#ai-补全限制) · [❓ 常见问题](#常见问题)
 
-<img src="docs/images/overview.png" alt="LeetCode Dojo 界面" width="100%">
+<img src="docs/images/overview.png" alt="LeetCode Dojo：左侧题面、右侧本地代码、底部测试面板" width="100%">
 
-<sub>左栏只剩题面 · 右栏是本地 <code>solution.py</code> · 底部是「本地测试 3/3 通过」</sub>
+<sub>左栏只剩题面（已隐藏线上编辑器）· 右栏是本地 <code>solution.py</code> · 底部是测试用例与逐条对比结果</sub>
 
 </div>
 
