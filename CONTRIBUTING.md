@@ -32,6 +32,23 @@ npm test           # 299 个测试
 - [ ] 不要提交 `dist/`、`*.vsix`、`leetcode/`（运行期题目目录）
 - [ ] 面向用户的文案统一用「LeetCode Dojo」；配置键前缀保持 `lcLocal.`
 
+## 更新截图
+
+README 引用的图片都在 `docs/images/`，**覆盖同名文件即可**（命名对照见 [`docs/images/README.md`](docs/images/README.md)）。
+建议宽度 ≥1400px 的 PNG；改完执行：
+
+```bash
+npm run build && npx vsce package --no-dependencies --allow-missing-repository
+```
+
+## 发布（本机网络注意事项）
+
+本机在校园 MITM 代理后，`git-receive-pack`（push 的 POST）会被 403 拦截，`git clone/fetch`（GET）正常。
+用 `scripts/publish.sh`：它会构建 vsix，并通过 GitHub Git Data API 把当前提交同步到远端
+（只上传改动过的文件，然后建 commit 并更新 `refs/heads/main`）。
+
+网络恢复后可以直接 `git push`（先 `git fetch origin && git reset --soft origin/main` 对齐一次）。
+
 ## 报告问题
 
 请附上：
