@@ -2,7 +2,7 @@
   "name": "leetcode-local-ide",
   "displayName": "LeetCode Dojo",
   "description": "在 VS Code / Cursor 里刷 LeetCode：左栏题面 + 右栏本地 IDE，本地编译调试、官方判题提交，并把 AI 补全限制在「API 提示 / 单行」级别。",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "publisher": "xialc",
   "license": "MIT",
   "engines": {

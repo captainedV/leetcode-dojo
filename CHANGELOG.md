@@ -3,6 +3,15 @@
 本项目遵循「版本号对齐 `package.json` + 每个版本一条 tag」的约定。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，日期为本地时间。
 
+## [0.4.1] — 2026-11-13
+
+### Fixed
+- **「只显示题面」后，题目描述 / 题解 / 提交记录 那一栏被折叠**：旧实现直接改写 FlexLayout 的 inline 样式，
+  关闭焦点模式时又把它们清掉，导致站点对那一栏的尺寸模型被破坏（变成 `0x0`），只有刷新页面才恢复。
+  现在改为「只给题面面板打标记类 + CSS `!important`」，**完全不碰站点的 inline 样式**，
+  关闭时移除标记类即可原样复原；并额外兼容站点自身把该栏折叠的情况。
+  （新增回归守卫测试 `test/bridge/focusMode.test.ts`，禁止再出现对布局元素写/删几何 inline 样式）
+
 ## [0.4.0] — 2026-11-12
 
 首个公开发布版本（仓库更名为 **LeetCode Dojo**，扩展 ID 仍为 `xialc.leetcode-local-ide`）。

@@ -406,184 +406,150 @@ function patchBlankAnchors(): void {
 // ------------------------------------------------------------------ 界面接管
 
 const FOCUS_STYLE_ID = 'lc-local-focus-style';
+const DESC_TABSET_CLASS = 'lc-desc-tabset';
+const DESC_PANE_CLASS = 'lc-desc-pane';
 
-/** 「只显示题面」需要的 CSS（站点用 FlexLayout，绝对定位，必须用 !important 覆盖内联样式） */
+/**
+ * 「只显示题面」的样式。
+ *
+ * 关键：**绝不改写 FlexLayout 元素的 inline style**。
+ * 之前直接写 `element.style.width = '100% !important'`，关掉时再把 inline 样式清掉，
+ * 结果 FlexLayout 自己的尺寸模型被破坏——题面那一栏变成 0x0（等于被折叠），
+ * 只能整页刷新才恢复。现在改成：给要保留的元素打标记类，其余全部用 CSS 隐藏，
+ * 关闭时只移除根节点上的 `lc-focus` 类，站点原本的 inline 样式一个字节都没动过。
+ */
 function ensureFocusStyle(): void {
   if (document.getElementById(FOCUS_STYLE_ID)) return;
   const style = document.createElement('style');
   style.id = FOCUS_STYLE_ID;
   style.textContent = `
-    /* 隐藏右侧「代码」与「测试用例/测试结果」两个面板、分割条与 sizer */
-    #${STYLE_ID} ~ * .flexlayout__splitter { display: none !important; }
-    html.lc-focus .flexlayout__splitter,
-    html.lc-focus .flexlayout__tabset_sizer,
-    html.lc-focus .flexlayout__tabset_header_sizer,
-    html.lc-focus .flexlayout__border_sizer { display: none !important; }
-    /* 让题面区可滚动且不被裁切 */
-    html.lc-focus .flexlayout__tabset { overflow: visible !important; }
+    /* 1) 隐藏除「题面」以外的所有面板 / 分割条 / sizer */
+    html.lc-focus .flexlayout__layout > .flexlayout__tabset:not(.${DESC_TABSET_CLASS}),
+    html.lc-focus .flexlayout__layout > .flexlayout__tab:not(.${DESC_PANE_CLASS}),
+    html.lc-focus .flexlayout__layout > .flexlayout__splitter,
+    html.lc-focus .flexlayout__layout > .flexlayout__tabset_sizer,
+    html.lc-focus .flexlayout__layout > .flexlayout__tabset_header_sizer,
+    html.lc-focus .flexlayout__layout > .flexlayout__border_sizer {
+      display: none !important;
+    }
+
+    /* 2) 题面 tabset 铺满整栏 */
+    html.lc-focus .flexlayout__layout > .flexlayout__tabset.${DESC_TABSET_CLASS} {
+      display: flex !important;
+      left: 0 !important;
+      top: 0 !important;
+      width: 100% !important;
+      height: 100% !important;
+    }
+
+    /* 3) 题面内容面板铺满（留出顶部标签栏） */
+    html.lc-focus .flexlayout__layout > .flexlayout__tab.${DESC_PANE_CLASS} {
+      display: flex !important;
+      left: 0 !important;
+      top: var(--lc-desc-top, 36px) !important;
+      width: 100% !important;
+      height: calc(100% - var(--lc-desc-top, 36px)) !important;
+      --width: 100% !important;
+      --height: calc(100% - var(--lc-desc-top, 36px)) !important;
+    }
+
+    /* 4) 万一站点把这一栏折叠了（FlexLayout 的 collapsed 态），也强制展开 */
+    html.lc-focus .flexlayout__tabset--collapsed.${DESC_TABSET_CLASS},
+    html.lc-focus .flexlayout__tabset--collapsed.${DESC_TABSET_CLASS} .flexlayout__tabset_content {
+      display: flex !important;
+      width: 100% !important;
+      height: 100% !important;
+      transform: none !important;
+    }
+    html.lc-focus .flexlayout__tabset--collapsed.${DESC_TABSET_CLASS} .flexlayout__tabset_header {
+      display: flex !important;
+      transform: none !important;
+      writing-mode: horizontal-tb !important;
+    }
   `;
   (document.head ?? document.documentElement).appendChild(style);
 }
 
-interface PaneRect {
-  el: HTMLElement;
-  left: number;
-  top: number;
-  width: number;
-  height: number;
+function isDescTabset(el: HTMLElement): boolean {
+  return /题目描述|Description/i.test(el.querySelector('.flexlayout__tab_button_content')?.textContent ?? '');
 }
 
-function visibleRect(el: HTMLElement): PaneRect {
-  const r = el.getBoundingClientRect();
-  return { el, left: r.left, top: r.top, width: r.width, height: r.height };
-}
-
-function setStyleImportant(el: HTMLElement, prop: string, val: string): void {
-  if (el.style.getPropertyValue(prop) === val && el.style.getPropertyPriority(prop) === 'important') return;
-  el.style.setProperty(prop, val, 'important');
-}
-
-function removeManagedStyles(el: HTMLElement): void {
-  for (const prop of ['display', 'left', 'top', 'width', 'height', '--width', '--height']) {
-    if (el.style.getPropertyPriority(prop) === 'important') {
-      el.style.removeProperty(prop);
-    }
-  }
-}
-
-let observedLayoutEl: HTMLElement | null = null;
-let layoutResizeObserver: ResizeObserver | null = null;
-
-function ensureLayoutResizeObserver(layout: HTMLElement): void {
-  if (observedLayoutEl === layout || typeof ResizeObserver === 'undefined') return;
-  layoutResizeObserver?.disconnect();
-  observedLayoutEl = layout;
-  layoutResizeObserver = new ResizeObserver(() => {
-    scheduleFocusFrame();
-  });
-  layoutResizeObserver.observe(layout);
+/** 找出题面 tabset（含「题目描述」标签的那个） */
+function findDescTabset(tabsets: HTMLElement[]): HTMLElement | undefined {
+  return tabsets.find((ts) => isDescTabset(ts)) ?? tabsets.find((ts) => !ts.querySelector('#editor') && ts.querySelector('.flexlayout__tab_button_content')) ?? tabsets[0];
 }
 
 /**
- * 只保留题面：站点布局是 FlexLayout（所有面板绝对定位 + 内联 left/top/width/height），
- * 因此不能只 display:none 右侧面板——必须同时把题面 tabset 拉到满宽，否则会留白。
- * 同时保留题面 tabset 下「题目描述 / 题解 / 提交记录」多标签自由切换能力。
+ * 找出题面内容面板。首选几何位置（与题面 tabset 左对齐），
+ * 失败时退回「文字最多且不含线上编辑器」的那个 —— 面板被折叠时几何法会失效。
+ */
+function findDescPane(panes: HTMLElement[], tabset: HTMLElement): HTMLElement | undefined {
+  const tsRect = tabset.getBoundingClientRect();
+  const candidates = panes.filter((p) => !p.querySelector('#editor'));
+  const byGeometry = candidates.find((p) => {
+    const r = p.getBoundingClientRect();
+    return r.width > 40 && r.height > 40 && Math.abs(r.left - tsRect.left) < 48;
+  });
+  if (byGeometry) return byGeometry;
+  let best: HTMLElement | undefined;
+  let bestLen = -1;
+  for (const p of candidates) {
+    const len = (p.innerText ?? '').length;
+    if (len > bestLen) {
+      bestLen = len;
+      best = p;
+    }
+  }
+  return bestLen > 80 ? best : undefined;
+}
+
+function clearFocusMarkers(): void {
+  document.documentElement.classList.remove('lc-focus');
+  for (const el of Array.from(document.getElementsByClassName(DESC_TABSET_CLASS))) el.classList.remove(DESC_TABSET_CLASS);
+  for (const el of Array.from(document.getElementsByClassName(DESC_PANE_CLASS))) el.classList.remove(DESC_PANE_CLASS);
+}
+
+/**
+ * 只保留题面：给题面 tabset / pane 打标记类，其它面板由 CSS 隐藏。
+ * 不改任何 inline style —— 关闭时移除标记类即可完全复原。
  */
 function applyFocusMode(): void {
   const layout = document.querySelector('.flexlayout__layout') as HTMLElement | null;
   const root = document.documentElement;
-  if (!layout) return;
-  ensureLayoutResizeObserver(layout);
+
+  if (!layout || !state.hideEditor || !currentSlug()) {
+    // 非题目页 / 用户选择完整网页：撤销标记，站点原样显示
+    clearFocusMarkers();
+    return;
+  }
 
   const kids = [...layout.children] as HTMLElement[];
   const tabsets = kids.filter((k) => k.classList.contains('flexlayout__tabset'));
   const panes = kids.filter((k) => k.classList.contains('flexlayout__tab'));
+  if (!tabsets.length) return;
 
-  if (!state.hideEditor || !currentSlug()) {
-    if (root.classList.contains('lc-focus')) {
-      root.classList.remove('lc-focus');
-      for (const k of kids) removeManagedStyles(k);
-    }
-    return;
-  }
-
-  const descTabset =
-    tabsets.find((ts) => /题目描述|Description/i.test(ts.querySelector('.flexlayout__tab_button_content')?.textContent ?? '')) ??
-    tabsets[0];
+  const descTabset = findDescTabset(tabsets);
   if (!descTabset) return;
+  const descPane = findDescPane(panes, descTabset);
 
-  const tsRect = visibleRect(descTabset);
-  const tsPath = descTabset.getAttribute('data-layout-path');
+  // 打标记（幂等）
+  if (!descTabset.classList.contains(DESC_TABSET_CLASS)) descTabset.classList.add(DESC_TABSET_CLASS);
+  if (descPane && !descPane.classList.contains(DESC_PANE_CLASS)) descPane.classList.add(DESC_PANE_CLASS);
 
-  // 识别属于左侧题面 tabset 的所有 tab 内容面板（含「题目描述」「题解」「提交记录」）
-  const belongsToDesc = (p: HTMLElement): boolean => {
-    if (p.querySelector('#editor')) return false;
-    const pPath = p.getAttribute('data-layout-path');
-    if (tsPath && pPath) return pPath.startsWith(`${tsPath}/`);
-    // 无 data-layout-path 兜底：先撤销我们之前加的 !important display 再看几何归属
-    if (p.dataset.lcHiddenByBridge === '1') {
-      p.style.removeProperty('display');
-      delete p.dataset.lcHiddenByBridge;
-    }
-    const r = p.getBoundingClientRect();
-    if (r.width < 40 || r.height < 40) return false;
-    return Math.abs(r.left - tsRect.left) < 48;
-  };
-
-  const descPanes = panes.filter(belongsToDesc);
-  const activeDescPane =
-    descPanes.find((p) => {
-      // 若之前被我们标过隐藏先清掉，交还给 FlexLayout 自己决定当前选中的 tab
-      if (p.dataset.lcHiddenByBridge === '1') {
-        p.style.removeProperty('display');
-        delete p.dataset.lcHiddenByBridge;
-      }
-      const inlineDisplay = p.style.getPropertyValue('display');
-      const inlinePrio = p.style.getPropertyPriority('display');
-      if (inlineDisplay === 'none' && inlinePrio !== 'important') return false;
-      const r = p.getBoundingClientRect();
-      return r.width >= 20 && r.height >= 20;
-    }) ?? descPanes[0] ?? null;
-
+  // 顶部标签栏高度 → 用 CSS 变量告知内容面板该从哪开始（不碰元素的 inline style）
   const headerEl = descTabset.querySelector('.flexlayout__tabset_header') as HTMLElement | null;
-  const headerH = headerEl ? headerEl.getBoundingClientRect().height : 0;
-  const geometric = activeDescPane ? Math.round(activeDescPane.getBoundingClientRect().top - tsRect.top) : 0;
-  const paneOffset = headerH > 8 ? Math.round(headerH) : geometric > 8 ? geometric : 36;
-
-  if (!root.classList.contains('lc-focus')) {
-    root.classList.add('lc-focus');
+  const headerH = headerEl ? Math.round(headerEl.getBoundingClientRect().height) : 0;
+  const paneTop = headerH > 8 ? headerH : 36;
+  if (root.style.getPropertyValue('--lc-desc-top') !== `${paneTop}px`) {
+    root.style.setProperty('--lc-desc-top', `${paneTop}px`);
   }
+  root.classList.add('lc-focus');
   ensureFocusStyle();
-
-  const descPaneSet = new Set(descPanes);
-
-  // 1) 隐藏右侧代码编辑器与测试用例 tabset/pane，但不干扰题面 tabset 下未激活的兄弟 tab（如题解/提交记录）
-  for (const k of kids) {
-    if (k === descTabset) continue;
-    if (descPaneSet.has(k)) {
-      if (k !== activeDescPane) {
-        removeManagedStyles(k);
-      }
-      continue;
-    }
-    k.dataset.lcHiddenByBridge = '1';
-    setStyleImportant(k, 'display', 'none');
-  }
-
-  // 2) 题面 tabset 铺满
-  setStyleImportant(descTabset, 'left', '0px');
-  setStyleImportant(descTabset, 'top', '0px');
-  setStyleImportant(descTabset, 'width', '100%');
-  setStyleImportant(descTabset, 'height', '100%');
-
-  // 3) 当前激活的题面/题解/提交记录 pane 铺满（tab 按钮行留出来）
-  if (activeDescPane) {
-    setStyleImportant(activeDescPane, 'display', 'flex');
-    setStyleImportant(activeDescPane, 'left', '0px');
-    setStyleImportant(activeDescPane, 'top', `${paneOffset}px`);
-    setStyleImportant(activeDescPane, 'width', '100%');
-    setStyleImportant(activeDescPane, 'height', `calc(100% - ${paneOffset}px)`);
-    setStyleImportant(activeDescPane, '--width', '100%');
-    setStyleImportant(activeDescPane, '--height', `calc(100% - ${paneOffset}px)`);
-  }
 }
 
 /** 兼容旧调用名 */
 function ensureOverlay(): void {
   applyFocusMode();
-}
-
-let focusRafId = 0;
-function scheduleFocusFrame(): void {
-  if (focusRafId) return;
-  focusRafId = window.requestAnimationFrame(() => {
-    focusRafId = 0;
-    try {
-      applyFocusMode();
-    } catch (err) {
-      reportError('focus-raf', err);
-    }
-  });
 }
 
 let domSyncTimer: ReturnType<typeof setTimeout> | undefined;
@@ -633,7 +599,7 @@ interface MonacoLike {
 function watchDom(): void {
   const observer = new MutationObserver(() => scheduleDomSync(false));
   observer.observe(document.documentElement, { childList: true, subtree: true });
-  window.addEventListener('resize', () => scheduleFocusFrame(), { passive: true });
+  window.addEventListener('resize', () => scheduleDomSync(false), { passive: true });
 }
 
 /** 透传内嵌网页焦点下的快捷键到宿主（Cmd/Ctrl+Alt+Enter 本地运行，Cmd/Ctrl+Alt+S 提交，Cmd/Ctrl+Alt+H 提示） */

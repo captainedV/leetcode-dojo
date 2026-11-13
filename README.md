@@ -8,7 +8,7 @@
 
 **本地跑测试 · 断点调试 · 官方判题提交 · AI 只提示不代写**
 
-[![version](https://img.shields.io/badge/version-0.4.0-2f81f7)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.4.1-2f81f7)](CHANGELOG.md)
 [![VS Code](https://img.shields.io/badge/VS%20Code-%E2%89%A51.90-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
 [![Cursor](https://img.shields.io/badge/Cursor-supported-000000)](https://cursor.com/)
 [![license](https://img.shields.io/badge/license-MIT-3fb950)](LICENSE)
@@ -76,10 +76,10 @@
 
 ```bash
 # VS Code
-code --install-extension leetcode-local-ide-0.4.0.vsix
+code --install-extension leetcode-local-ide-0.4.1.vsix
 
 # Cursor
-cursor --install-extension leetcode-local-ide-0.4.0.vsix
+cursor --install-extension leetcode-local-ide-0.4.1.vsix
 ```
 
 > 也可以在 `扩展` 面板右上 `…` → `从 VSIX 安装…`。安装后**重载窗口**。
@@ -92,7 +92,7 @@ cursor --install-extension leetcode-local-ide-0.4.0.vsix
 git clone https://github.com/captainedV/leetcode-dojo.git
 cd leetcode-dojo
 npm ci && npm run package
-code --install-extension leetcode-local-ide-0.4.0.vsix
+code --install-extension leetcode-local-ide-0.4.1.vsix
 ```
 </details>
 
