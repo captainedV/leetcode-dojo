@@ -65,6 +65,10 @@ export class LcSession implements vscode.Disposable {
   private persistTimer?: ReturnType<typeof setTimeout>;
   private username?: string;
   private lastReportedSignedIn?: boolean;
+  /** 上一次观察到的「网页上的语言」，用于区分「用户真的切了语言」与「本来就是别的语言」 */
+  private lastSiteLang?: string;
+  /** 判题看护：宿主侧兜底轮询 + 超时复位 */
+  private judgeWatch?: { id: string; kind: JudgeKind; cancelled: boolean; timer?: ReturnType<typeof setTimeout> };
   /** 供自检探针读取的最近日志 */
   private readonly logRing: string[] = [];
   private lastPush = { lang: '', code: '' };
@@ -565,8 +569,18 @@ export class LcSession implements vscode.Disposable {
         this.log(
           `[bridge] 拦截 ${msg.kind} slug=${msg.slug} lang=${msg.siteLang ?? msg.lang} 已替换=${msg.replaced} 代码 ${msg.codeLength}B`,
         );
-        if (msg.siteLang && this.active && normalizeLangSlug(msg.siteLang) !== this.active.langSlug) {
-          void this.followSiteLanguage(msg.siteLang);
+        // 注意：站点自己的语言经常与本地不同（例如站点默认 C++，而本地是 Python）。
+        // 只要「网页上的语言 ≠ 本地语言」就切文件，会导致每次提交都把本地语言换掉。
+        // 正确语义是：只有观察到「网页语言发生了变化」（用户真的手动切了），才跟随。
+        const siteLang = msg.siteLang ? normalizeLangSlug(msg.siteLang) : undefined;
+        const prevSiteLang = this.lastSiteLang;
+        const langChanged = !!siteLang && !!prevSiteLang && siteLang !== prevSiteLang;
+        if (siteLang) this.lastSiteLang = siteLang;
+        if (langChanged && siteLang) {
+          this.log(`[lang] 网页语言变化 ${prevSiteLang} → ${siteLang}（本地 ${this.active?.langSlug ?? '-'}）`);
+        }
+        if (langChanged && siteLang && this.active && siteLang !== this.active.langSlug) {
+          void this.followSiteLanguage(siteLang);
         } else if (msg.replaced) {
           this.panel?.post({ type: 'status', text: msg.kind === 'submit' ? '已接管提交' : '已接管运行', level: 'ok' });
         }
@@ -575,6 +589,9 @@ export class LcSession implements vscode.Disposable {
       case 'judgeStarted': {
         this.panel?.post({ type: 'status', text: '判题中…', level: 'busy' });
         this.resultsView.setRunning({ active: true, label: 'LeetCode 官方判题中…', cancellable: false });
+        // 网页自己的轮询响应不一定能被桥接捕获（站点随时可能改格式），
+        // 这里用宿主侧 cookie 再轮询一次；谁先拿到结果就用谁的，另有超时复位兜底。
+        this.beginJudgeWatch(msg.submissionId, msg.kind);
         break;
       }
       case 'judgeResult': {
@@ -582,7 +599,8 @@ export class LcSession implements vscode.Disposable {
         break;
       }
       case 'judgeError': {
-        this.resultsView.setRunning({ active: false });
+        this.endJudgeWatch();
+        this.panel?.post({ type: 'status', text: '判题请求失败', level: 'warn' });
         this.log(`[bridge] ${msg.kind} 失败：${msg.message}`);
         break;
       }
@@ -809,6 +827,7 @@ export class LcSession implements vscode.Disposable {
     const { files, created } = await this.deps.store.ensureProblem(question, langSlug);
     const meta = parseMetaData(question.metaData);
     this.active = { slug, question, meta, files, langSlug };
+    this.lastSiteLang = undefined;
     this.log(`[problem] ${slug} → ${files.dir.fsPath}（${langSlug}，${created ? '新建' : '已存在'}）`);
 
     // 强制在右栏打开本地代码文件（自动分栏 + 清理左栏可能残留的同名标签）
@@ -891,6 +910,7 @@ export class LcSession implements vscode.Disposable {
     this.pushCodeToBridge();
     await this.pushPanelState();
     await this.pushResultsViewState();
+    this.lastSiteLang = undefined; // 重新建立基线，避免自己切换后又被网页旧语言拉回去
     if (!opts.silent) {
       const harness = getHarness(target);
       const support = harness && active.meta ? harness.supports(active.meta) : undefined;
@@ -903,12 +923,65 @@ export class LcSession implements vscode.Disposable {
     void this.ensureHarnessQuietly();
   }
 
+  /**
+   * 判题看护：宿主侧兜底轮询 + 超时复位。
+   *
+   * 为什么需要：网页里的「判题中」状态只有拿到 `judgeResult` 才会清除；
+   * 一旦站点轮询响应的格式/时序变化导致桥接没捕获到，界面就会永久卡在「判题中」。
+   * 这里用同一份登录态在宿主侧再查一次结果，并保证状态一定会被复位。
+   */
+  private beginJudgeWatch(id: string, kind: JudgeKind): void {
+    this.endJudgeWatch();
+    const timeoutMs = vscode.workspace.getConfiguration('lcLocal').get<number>('judge.timeoutMs', 120000);
+    const watch: { id: string; kind: JudgeKind; cancelled: boolean; timer?: ReturnType<typeof setTimeout> } = {
+      id,
+      kind,
+      cancelled: false,
+    };
+    this.judgeWatch = watch;
+    watch.timer = setTimeout(() => {
+      if (watch.cancelled) return;
+      this.log(`[judge] 等待判题结果超时（${id}，${timeoutMs}ms），已复位状态`);
+      this.panel?.post({ type: 'toast', text: '等待判题结果超时。网页上可能已有结果，可点「官方运行」重试或查看输出面板。', level: 'warn' });
+      this.endJudgeWatch();
+    }, timeoutMs);
+
+    void this.client
+      .pollResult(id, { timeoutMs: Math.max(5000, timeoutMs - 2000) })
+      .then((result) => {
+        if (watch.cancelled) return;
+        this.log(`[judge] 宿主侧轮询拿到结果（${id}）`);
+        this.renderJudgeResult(kind, result);
+      })
+      .catch((err) => {
+        if (watch.cancelled) return;
+        this.log(`[judge] 宿主侧轮询未取到结果（${id}）：${(err as Error).message}；继续等网页或超时`);
+      });
+  }
+
+  /** 结束判题看护并复位「进行中」状态（没有看护任务时不要乱发消息，否则横幅会被自己关掉） */
+  private endJudgeWatch(): void {
+    const watch = this.judgeWatch;
+    if (!watch) return;
+    watch.cancelled = true;
+    if (watch.timer) clearTimeout(watch.timer);
+    this.judgeWatch = undefined;
+    this.resultsView.setRunning({ active: false });
+  }
+
   /** 用户在网页上切了语言：本地跟着切（并提示本次判题可能用了旧语言） */
   private async followSiteLanguage(siteLang: string): Promise<void> {
     const active = this.active;
-    if (!active) return;
+    if (!active) {
+      this.log('[lang] 网页语言变化，但没有进行中的题目，忽略');
+      return;
+    }
     const target = normalizeLangSlug(siteLang);
-    if (!this.langOptions().some((l) => l.slug === target)) return;
+    if (!this.langOptions().some((l) => l.slug === target)) {
+      this.log(`[lang] 网页语言 ${target} 不在本题可选语言内，忽略`);
+      return;
+    }
+    this.log(`[lang] 跟随网页语言 → ${target}（当前 ${active.langSlug}）`);
     await this.switchLanguage(target, { silent: true });
     this.panel?.post({
       type: 'toast',
@@ -1395,6 +1468,7 @@ export class LcSession implements vscode.Disposable {
   }
 
   private renderJudgeResult(kind: JudgeKind, result: Parameters<typeof formatJudgeResult>[1]): void {
+    this.endJudgeWatch();
     const lines = formatJudgeResult(kind, result);
     for (const line of lines) this.log(line);
     const baseAccepted = /accepted|通过/i.test(result.statusMsg ?? '');

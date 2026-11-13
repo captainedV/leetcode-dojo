@@ -22,11 +22,11 @@ export function activate(context: vscode.ExtensionContext): void {
   const store = new ProblemStore(context, log);
   session = new LcSession({ context, output, store });
 
-  const register = (id: string, handler: () => unknown) =>
+  const register = (id: string, handler: (...args: never[]) => unknown) =>
     context.subscriptions.push(
-      vscode.commands.registerCommand(id, async () => {
+      vscode.commands.registerCommand(id, async (...args: unknown[]) => {
         try {
-          await handler();
+          await (handler as (...a: unknown[]) => unknown)(...args);
         } catch (err) {
           const message = (err as Error).message ?? String(err);
           log(`[command:${id}] ${message}`);
@@ -46,7 +46,7 @@ export function activate(context: vscode.ExtensionContext): void {
   register('lcLocal.debugLocal', () => s().debugLocal());
   register('lcLocal.runOnLeetCode', () => s().runOnLeetCode());
   register('lcLocal.submit', () => s().submitToLeetCode());
-  register('lcLocal.switchLanguage', () => s().switchLanguage());
+  register('lcLocal.switchLanguage', (lang?: string) => s().switchLanguage(lang));
   register('lcLocal.reloadSnippet', () => s().reloadSnippet());
   register('lcLocal.regenerateHarness', () => s().regenerateHarness());
   register('lcLocal.aiHarness', () => s().aiHarness());

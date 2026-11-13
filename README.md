@@ -8,7 +8,7 @@
 
 **本地跑测试 · 断点调试 · 官方判题提交 · AI 只提示不代写**
 
-[![version](https://img.shields.io/badge/version-0.4.1-2f81f7)](CHANGELOG.md)
+[![version](https://img.shields.io/badge/version-0.4.2-2f81f7)](CHANGELOG.md)
 [![VS Code](https://img.shields.io/badge/VS%20Code-%E2%89%A51.90-007ACC?logo=visualstudiocode&logoColor=white)](https://code.visualstudio.com/)
 [![Cursor](https://img.shields.io/badge/Cursor-supported-000000)](https://cursor.com/)
 [![license](https://img.shields.io/badge/license-MIT-3fb950)](LICENSE)
@@ -76,10 +76,10 @@
 
 ```bash
 # VS Code
-code --install-extension leetcode-local-ide-0.4.1.vsix
+code --install-extension leetcode-local-ide-0.4.2.vsix
 
 # Cursor
-cursor --install-extension leetcode-local-ide-0.4.1.vsix
+cursor --install-extension leetcode-local-ide-0.4.2.vsix
 ```
 
 > 也可以在 `扩展` 面板右上 `…` → `从 VSIX 安装…`。安装后**重载窗口**。
@@ -92,7 +92,7 @@ cursor --install-extension leetcode-local-ide-0.4.1.vsix
 git clone https://github.com/captainedV/leetcode-dojo.git
 cd leetcode-dojo
 npm ci && npm run package
-code --install-extension leetcode-local-ide-0.4.1.vsix
+code --install-extension leetcode-local-ide-0.4.2.vsix
 ```
 </details>
 
@@ -287,6 +287,7 @@ heapq.heappush(h, (dist, node)) # 想不起参数顺序时，会补出 (h, item)
 | `lcLocal.layout.autoSplit` | `true` | 自动左右分栏 |
 | `lcLocal.layout.leftRatio` | `0.45` | 左栏宽度比例 |
 | `lcLocal.editor.hideSiteEditor` | `true` | 只显示题面 |
+| `lcLocal.judge.timeoutMs` | `120000` | 等待判题结果的超时（超时自动复位「判题中」） |
 | `lcLocal.workspace.subdir` | `leetcode` | 题目存放目录 |
 
 题目文件按 `leetcode/<题号>.<slug>/` 存放，里面有 `solution.*`、`cases.json`、`problem.md`，可以随意编辑。

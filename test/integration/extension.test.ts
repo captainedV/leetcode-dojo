@@ -353,6 +353,72 @@ public:
     );
   });
 
+  it('网页语言与本地不同时不会切走本地文件（只在真正切换时跟随）', async () => {
+    if (!online) return;
+    // 当前应处于 python3（前面的用例切过 cpp？统一先切回 python3）
+    await vscodeMock.commands.executeCommand('lcLocal.switchLanguage', 'python3');
+    await new Promise((r) => setTimeout(r, 300));
+    const before = findOutputLogs().join('\n');
+    expect(before).toContain('[lang]');
+
+    // 站点自己的语言是 cpp —— 这只是"不同"，不是"用户切换"，不应跟着变
+    vscodeMock.__sendToWebview({ type: 'bridge', msg: { t: 'intercept', kind: 'submit', slug: 'two-sum', siteLang: 'cpp', lang: 'python3', codeLength: 100, replaced: true } });
+    await new Promise((r) => setTimeout(r, 500));
+    let logs = findOutputLogs().join('\n');
+    expect(logs).toContain('拦截 submit');
+    expect(
+      vscodeMock.postedMessages.some(
+        (m) => (m as { type?: string; text?: string }).type === 'toast' && /切换到了 cpp/.test((m as { text?: string }).text ?? ''),
+      ),
+    ).toBe(false);
+
+    // 再观察一次：仍然是 cpp（没有变化）→ 依然不应切
+    vscodeMock.__sendToWebview({ type: 'bridge', msg: { t: 'intercept', kind: 'submit', slug: 'two-sum', siteLang: 'cpp', lang: 'python3', codeLength: 100, replaced: true } });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(
+      vscodeMock.postedMessages.some(
+        (m) => (m as { type?: string; text?: string }).type === 'toast' && /切换到了/.test((m as { text?: string }).text ?? ''),
+      ),
+    ).toBe(false);
+
+    // 用户在网页上真的切到 java → 这时才跟随
+    vscodeMock.__sendToWebview({ type: 'bridge', msg: { t: 'intercept', kind: 'submit', slug: 'two-sum', siteLang: 'java', lang: 'python3', codeLength: 100, replaced: true } });
+    await waitFor(async () => {
+      const files = await readdir(join(wsRoot, 'leetcode', '001.two-sum'));
+      return files.includes('Solution.java');
+    }, 15000, '跟随网页切到 java');
+    expect(
+      vscodeMock.postedMessages.some(
+        (m) => (m as { type?: string; text?: string }).type === 'toast' && /切换到了 java/.test((m as { text?: string }).text ?? ''),
+      ),
+    ).toBe(true);
+    await vscodeMock.commands.executeCommand('lcLocal.switchLanguage', 'python3');
+  });
+
+  it('判题卡住有超时兜底：judgeStarted 后会自动复位状态', async () => {
+    if (!online) return;
+    vscodeMock.__setConfig('lcLocal.judge.timeoutMs', 400);
+    try {
+      const before = viewMessages().length;
+      vscodeMock.__sendToWebview({ type: 'bridge', msg: { t: 'judgeStarted', kind: 'submit', submissionId: '999999999' } });
+      // 立刻应进入「判题中」
+      await waitFor(
+        () => viewMessages().slice(before).some((m) => (m as { type?: string; running?: { active?: boolean } }).type === 'running' && (m as { running?: { active?: boolean } }).running?.active === true),
+        8000,
+        '进入判题中',
+      );
+      // 超时后必须复位（不依赖桥接是否收到结果）
+      await waitFor(
+        () => viewMessages().slice(before).some((m) => (m as { type?: string; running?: { active?: boolean } }).type === 'running' && (m as { running?: { active?: boolean } }).running?.active === false),
+        15000,
+        '超时复位判题状态',
+      );
+      expect(findOutputLogs().join('\n')).toContain('等待判题结果超时');
+    } finally {
+      vscodeMock.__setConfig('lcLocal.judge.timeoutMs', 120000);
+    }
+  });
+
   it('登录态 / 端口 / 上次题目在"重启 IDE"后仍然保留', async () => {
     if (!online) return;
     // 1) 模拟用户在网页里登录成功后我们拿到的 cookie（走粘贴入口）
